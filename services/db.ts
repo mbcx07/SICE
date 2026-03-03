@@ -1024,13 +1024,13 @@ export const dbService = {
     const ref = doc(db, 'siceSettings', 'global');
     const unsub = onSnapshot(ref, (snap) => {
       if (!snap.exists()) {
-        onValue({ id: 'global', themeColor: '#0ea5e9', calendarInvitePatient: true });
+        onValue({ id: 'global', themeColor: '#2b5ea7', calendarInvitePatient: true });
         return;
       }
       const d: any = snap.data() || {};
       onValue({
         id: 'global',
-        themeColor: String(d.themeColor || '#0ea5e9'),
+        themeColor: String(d.themeColor || '#2b5ea7'),
         logoDataUrl: d.logoDataUrl ? String(d.logoDataUrl) : undefined,
         calendarWebhookUrl: d.calendarWebhookUrl ? String(d.calendarWebhookUrl) : undefined,
         calendarWebhookSecret: d.calendarWebhookSecret ? String(d.calendarWebhookSecret) : undefined,

@@ -64,7 +64,8 @@ const App: React.FC = () => {
   const [uiMessage, setUiMessage] = useState<string | null>(null);
 
   // settings
-  const [settings, setSettings] = useState<SiceSettings>({ id: 'global', themeColor: '#0ea5e9', calendarInvitePatient: true });
+  const [settings, setSettings] = useState<SiceSettings>({ id: 'global', themeColor: '#2b5ea7', calendarInvitePatient: true });
+  const defaultLogoUrl = '/diagnostic-support-del-noroeste.jpg';
 
   // patients
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -138,6 +139,8 @@ const App: React.FC = () => {
   useEffect(() => {
     document.documentElement.style.setProperty('--brand', clampColor(settings.themeColor));
   }, [settings.themeColor]);
+
+  const resolvedLogo = settings.logoDataUrl ? settings.logoDataUrl : defaultLogoUrl;
 
   useEffect(() => {
     if (!user) return;
@@ -455,7 +458,7 @@ const App: React.FC = () => {
       <div className="appShell">
         <div className="card" style={{ maxWidth: 460, margin: '64px auto' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {settings.logoDataUrl ? <img src={settings.logoDataUrl} alt="Logo" style={{ height: 48, width: 48, objectFit: 'contain' }} /> : null}
+            {resolvedLogo ? <img src={resolvedLogo} alt="Logo" style={{ height: 48, width: 48, objectFit: 'contain' }} /> : null}
             <div>
               <h2 style={{ margin: 0 }}>SICE</h2>
               <div className="muted">Acceso</div>
@@ -495,7 +498,7 @@ const App: React.FC = () => {
           <div className="printNote">
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                {settings.logoDataUrl ? <img src={settings.logoDataUrl} alt="Logo" style={{ height: 52, width: 52, objectFit: 'contain' }} /> : null}
+                {resolvedLogo ? <img src={resolvedLogo} alt="Logo" style={{ height: 52, width: 52, objectFit: 'contain' }} /> : null}
                 <div>
                   <div style={{ fontSize: 18, fontWeight: 700 }}>Nota de Venta</div>
                   <div className="muted">{salePrintTarget.folio}</div>
@@ -554,7 +557,7 @@ const App: React.FC = () => {
 
       <header className="topbar">
         <div className="brand">
-          {settings.logoDataUrl ? <img src={settings.logoDataUrl} alt="Logo" className="brandLogo" /> : <div className="brandLogoFallback" />}
+          {resolvedLogo ? <img src={resolvedLogo} alt="Logo" className="brandLogo" /> : <div className="brandLogoFallback" />}
           <div>
             <div className="brandTitle">SICE</div>
             <div className="brandSub">{user.nombre} · {user.unidad}</div>
@@ -950,9 +953,9 @@ const App: React.FC = () => {
               <div style={{ height: 14 }} />
               <label className="label">Logo</label>
               <input className="input" type="file" accept="image/*" onChange={(e) => updateLogo(e.target.files?.[0])} />
-              {settings.logoDataUrl ? (
+              {resolvedLogo ? (
                 <div style={{ marginTop: 10 }}>
-                  <img src={settings.logoDataUrl} alt="Logo" style={{ maxHeight: 90, maxWidth: 260, objectFit: 'contain', border: '1px solid #e5e7eb', borderRadius: 8, padding: 6, background: '#fff' }} />
+                  <img src={resolvedLogo} alt="Logo" style={{ maxHeight: 90, maxWidth: 260, objectFit: 'contain', border: '1px solid #e5e7eb', borderRadius: 8, padding: 6, background: '#fff' }} />
                   <div style={{ height: 8 }} />
                   <button className="btnDanger" onClick={async () => {
                     if (!confirm('¿Quitar logo?')) return;
