@@ -317,11 +317,15 @@ const App: React.FC = () => {
         try {
           const followUpAt = addMonthsIso(deliveryEstimatedAt, 11);
           const resp = await callCalendarWebhook('createFollowUpEvent', {
+            saleId: id,
             when: followUpAt,
+            deliveryEstimatedAt,
+            patientName,
+            patientEmail: patientObj?.email || '',
+            patientPhone: patientObj?.phone || '',
             title: `Seguimiento plantillas - ${patientName || 'Paciente'}`,
             description: `Diagnostic Support del Noroeste\nPaciente: ${patientName}\nTel: ${patientObj?.phone || ''}\nCorreo: ${patientObj?.email || ''}\nEntrega estimada: ${deliveryEstimatedAt}\n\nContacto: +52 612 169 2544`,
-            invitePatient: settings.calendarInvitePatient === true,
-            patientEmail: patientObj?.email || ''
+            invitePatient: settings.calendarInvitePatient === true
           });
           if (resp?.eventId) {
             await dbService.updateSale(id, { followUpAt, followUpCalendarEventId: resp.eventId } as any);
@@ -365,12 +369,15 @@ const App: React.FC = () => {
       // Calendar automation
       try {
         const resp = await callCalendarWebhook('createAppointmentEvent', {
+          appointmentId: id,
+          patientName,
+          patientEmail: patientObj?.email || '',
+          patientPhone: patientObj?.phone || '',
           title: `Cita - ${patientName || title}`,
           start: startIso,
           end: endIso,
           description: `Diagnostic Support del Noroeste\nPaciente: ${patientName}\nTel: ${patientObj?.phone || ''}\nCorreo: ${patientObj?.email || ''}\n\n${String(apptDraft.notes || '')}`,
-          invitePatient: settings.calendarInvitePatient === true,
-          patientEmail: patientObj?.email || ''
+          invitePatient: settings.calendarInvitePatient === true
         });
         if (resp?.eventId) {
           await dbService.updateAppointment(id, { calendarEventId: resp.eventId } as any);
