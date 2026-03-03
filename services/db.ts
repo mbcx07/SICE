@@ -34,13 +34,13 @@ import { Tramite, Bitacora, Role, User, EstatusWorkflow, TipoBeneficiario } from
 import { validateWorkflowTransition } from './workflow';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyA_V82BKDeUOHExz-zUiazBxsfP6eXadmU",
-  authDomain: "prestaciones-d3f9a.firebaseapp.com",
-  projectId: "prestaciones-d3f9a",
-  storageBucket: "prestaciones-d3f9a.firebasestorage.app",
-  messagingSenderId: "510072300294",
-  appId: "1:510072300294:web:213688c873acb375f47487",
-  measurementId: "G-R20P8ZRHEE"
+  apiKey: "AIzaSyB7OrbWe3_dksWgIqDijPzoF4EgltekJHU",
+  authDomain: "sice-23295.firebaseapp.com",
+  projectId: "sice-23295",
+  storageBucket: "sice-23295.firebasestorage.app",
+  messagingSenderId: "298295905546",
+  appId: "1:298295905546:web:eaba5d4d4dbc27a82afef3",
+  measurementId: "G-THF2K8Y3ZN"
 };
 
 const app = initializeApp(firebaseConfig);
