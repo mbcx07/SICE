@@ -460,7 +460,7 @@ const App: React.FC = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {resolvedLogo ? <img src={resolvedLogo} alt="Logo" style={{ height: 48, width: 48, objectFit: 'contain' }} /> : null}
             <div>
-              <h2 style={{ margin: 0 }}>SICE</h2>
+              <h2 style={{ margin: 0 }}>Diagnostic Support del Noroeste</h2>
               <div className="muted">Acceso</div>
             </div>
           </div>
@@ -559,7 +559,7 @@ const App: React.FC = () => {
         <div className="brand">
           {resolvedLogo ? <img src={resolvedLogo} alt="Logo" className="brandLogo" /> : <div className="brandLogoFallback" />}
           <div>
-            <div className="brandTitle">SICE</div>
+            <div className="brandTitle">Diagnostic Support del Noroeste</div>
             <div className="brandSub">{user.nombre} · {user.unidad}</div>
           </div>
         </div>
