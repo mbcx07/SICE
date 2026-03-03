@@ -65,7 +65,8 @@ const App: React.FC = () => {
 
   // settings
   const [settings, setSettings] = useState<SiceSettings>({ id: 'global', themeColor: '#2b5ea7', calendarInvitePatient: true });
-  const defaultLogoUrl = '/diagnostic-support-del-noroeste.jpg';
+  // Use BASE_URL so it works on GitHub Pages (/SICE/)
+  const defaultLogoUrl = `${(import.meta as any).env?.BASE_URL || '/'}diagnostic-support-del-noroeste.jpg`;
 
   // patients
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -466,8 +467,8 @@ const App: React.FC = () => {
           </div>
 
           <div style={{ height: 16 }} />
-          <label className="label">Matrícula</label>
-          <input className="input" value={matricula} onChange={(e) => setMatricula(e.target.value)} placeholder="99032103" />
+          <label className="label">Usuario</label>
+          <input className="input" value={matricula} onChange={(e) => setMatricula(e.target.value)} placeholder="Luisana" />
 
           <div style={{ height: 12 }} />
           <label className="label">Contraseña</label>
@@ -478,7 +479,15 @@ const App: React.FC = () => {
 
           {error ? <div className="errorBox" style={{ marginTop: 12 }}>{error}</div> : null}
 
-          <div style={{ height: 16 }} />
+          <div style={{ height: 12 }} />
+          <div className="muted" style={{ fontSize: 12 }}>
+            Usuario: <b>Luisana</b>
+          </div>
+          <div className="muted" style={{ fontSize: 12 }}>
+            Contraseña: <b>170317</b>
+          </div>
+
+          <div style={{ height: 12 }} />
           <button className="btnPrimary" onClick={doLogin} disabled={!matricula.trim() || !password}>Entrar</button>
 
           <div style={{ height: 10 }} />
