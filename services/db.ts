@@ -1010,7 +1010,7 @@ export const dbService = {
     };
   },
 
-  async updateSiceSettings(patch: Partial<Pick<SiceSettings, 'themeColor' | 'logoDataUrl'>>): Promise<void> {
+  async updateSiceSettings(patch: Partial<SiceSettings>): Promise<void> {
     const user = await ensureSession();
     if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
     await setDoc(doc(db, 'siceSettings', 'global'), {
@@ -1024,7 +1024,7 @@ export const dbService = {
     const ref = doc(db, 'siceSettings', 'global');
     const unsub = onSnapshot(ref, (snap) => {
       if (!snap.exists()) {
-        onValue({ id: 'global', themeColor: '#0ea5e9' });
+        onValue({ id: 'global', themeColor: '#0ea5e9', calendarInvitePatient: true });
         return;
       }
       const d: any = snap.data() || {};
@@ -1032,6 +1032,9 @@ export const dbService = {
         id: 'global',
         themeColor: String(d.themeColor || '#0ea5e9'),
         logoDataUrl: d.logoDataUrl ? String(d.logoDataUrl) : undefined,
+        calendarWebhookUrl: d.calendarWebhookUrl ? String(d.calendarWebhookUrl) : undefined,
+        calendarWebhookSecret: d.calendarWebhookSecret ? String(d.calendarWebhookSecret) : undefined,
+        calendarInvitePatient: d.calendarInvitePatient === false ? false : true,
         updatedAt: d.updatedAt ? String(d.updatedAt) : undefined,
         updatedBy: d.updatedBy ? String(d.updatedBy) : undefined
       });
@@ -1137,8 +1140,18 @@ export const dbService = {
   async createSale(input: {
     patientId?: string;
     patientName?: string;
+    patientEmail?: string;
+    patientPhone?: string;
+    invoiceRequired?: boolean;
+    delivered?: boolean;
+    deliveryEstimatedAt?: string;
+    deliveryActualAt?: string;
+    providerPaid?: boolean;
+    providerDue?: number;
+
     items: SaleLineItem[];
     shipping?: number;
+    shippingCost?: number;
     ivaRate?: number;
     notes?: string;
   }): Promise<string> {
@@ -1148,6 +1161,7 @@ export const dbService = {
     const year = new Date().getFullYear();
     const ivaRate = Number.isFinite(Number(input.ivaRate)) ? Number(input.ivaRate) : 0.16;
     const shipping = Number(input.shipping || 0);
+    const shippingCost = Number((input as any).shippingCost || 0);
     const items = Array.isArray(input.items) ? input.items : [];
 
     const cleanItems = items
@@ -1166,7 +1180,7 @@ export const dbService = {
     const subtotal = Math.max(0, itemsSubtotal + shipping);
     const iva = Math.max(0, subtotal * ivaRate);
     const total = subtotal + iva;
-    const costTotal = itemsCost; // shipping cost not tracked
+    const costTotal = itemsCost + Math.max(0, shippingCost);
     const profit = total - costTotal;
 
     const counterRef = doc(db, 'counters', `sales-${year}`);
@@ -1182,10 +1196,22 @@ export const dbService = {
         folio,
         year,
         consecutive: next,
+
         patientId: input.patientId ? String(input.patientId) : '',
         patientName: input.patientName ? String(input.patientName) : '',
+        patientEmail: input.patientEmail ? String(input.patientEmail) : '',
+        patientPhone: input.patientPhone ? String(input.patientPhone) : '',
+
+        invoiceRequired: Boolean(input.invoiceRequired),
+        delivered: Boolean(input.delivered),
+        deliveryEstimatedAt: input.deliveryEstimatedAt ? String(input.deliveryEstimatedAt) : '',
+        deliveryActualAt: input.deliveryActualAt ? String(input.deliveryActualAt) : '',
+        providerPaid: Boolean(input.providerPaid),
+        providerDue: Number(input.providerDue || 0),
+
         items: cleanItems,
         shipping,
+        shippingCost,
         ivaRate,
         subtotal,
         iva,
@@ -1203,6 +1229,12 @@ export const dbService = {
     });
 
     return result;
+  },
+
+  async updateSale(id: string, patch: Partial<Sale>): Promise<void> {
+    const user = await ensureSession();
+    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
+    await setDoc(doc(db, 'sales', id), { ...patch, updatedAt: nowIso() } as any, { merge: true });
   },
 
   async deleteSale(id: string): Promise<void> {
@@ -1235,10 +1267,13 @@ export const dbService = {
       title: String(appt.title || '').trim(),
       patientId: appt.patientId ? String(appt.patientId) : '',
       patientName: appt.patientName ? String(appt.patientName) : '',
+      patientEmail: (appt as any).patientEmail ? String((appt as any).patientEmail) : '',
+      patientPhone: (appt as any).patientPhone ? String((appt as any).patientPhone) : '',
       start: String(appt.start),
       end: String(appt.end),
       status: appt.status || 'scheduled',
       notes: appt.notes ? String(appt.notes) : '',
+      calendarEventId: (appt as any).calendarEventId ? String((appt as any).calendarEventId) : '',
       updatedAt: nowIso()
     };
 
@@ -1250,6 +1285,12 @@ export const dbService = {
     payload.createdAt = nowIso();
     const ref = await addDoc(collection(db, 'appointments'), payload);
     return ref.id;
+  },
+
+  async updateAppointment(id: string, patch: Partial<Appointment>): Promise<void> {
+    const user = await ensureSession();
+    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
+    await setDoc(doc(db, 'appointments', id), { ...patch, updatedAt: nowIso() } as any, { merge: true });
   },
 
   async deleteAppointment(id: string): Promise<void> {

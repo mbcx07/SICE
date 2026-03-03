@@ -44,6 +44,18 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+function addMonthsIso(baseIso: string, months: number): string {
+  const d = new Date(baseIso);
+  if (!Number.isFinite(d.getTime())) return baseIso;
+  const day = d.getDate();
+  d.setMonth(d.getMonth() + months);
+  // handle month rollover (e.g. Jan 31 + 1 month)
+  if (d.getDate() !== day) {
+    d.setDate(0);
+  }
+  return d.toISOString();
+}
+
 const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
@@ -52,7 +64,7 @@ const App: React.FC = () => {
   const [uiMessage, setUiMessage] = useState<string | null>(null);
 
   // settings
-  const [settings, setSettings] = useState<SiceSettings>({ id: 'global', themeColor: '#0ea5e9' });
+  const [settings, setSettings] = useState<SiceSettings>({ id: 'global', themeColor: '#0ea5e9', calendarInvitePatient: true });
 
   // patients
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -65,7 +77,20 @@ const App: React.FC = () => {
 
   // sales
   const [sales, setSales] = useState<Sale[]>([]);
-  const [saleDraft, setSaleDraft] = useState<{ patientId?: string; patientName?: string; shipping: number; ivaRate: number; notes?: string; items: SaleLineItem[] }>(() => ({ shipping: 0, ivaRate: 0.16, items: [{ name: '', qty: 1, unitPrice: 0, unitCost: 0 }] }));
+  const [saleDraft, setSaleDraft] = useState<{
+    patientId?: string;
+    patientName?: string;
+    deliveryEstimatedAt?: string;
+    invoiceRequired?: boolean;
+    delivered?: boolean;
+    providerPaid?: boolean;
+    providerDue?: number;
+    shipping: number; // charge
+    shippingCost: number; // cost
+    ivaRate: number;
+    notes?: string;
+    items: SaleLineItem[];
+  }>(() => ({ shipping: 0, shippingCost: 0, ivaRate: 0.16, invoiceRequired: false, delivered: false, providerPaid: false, providerDue: 0, items: [{ name: '', qty: 1, unitPrice: 0, unitCost: 0 }] }));
   const [salePrintTarget, setSalePrintTarget] = useState<Sale | null>(null);
 
   // appointments
@@ -171,7 +196,8 @@ const App: React.FC = () => {
     const ivaRate = Number(saleDraft.ivaRate ?? 0.16);
     const iva = Math.max(0, subtotal * ivaRate);
     const total = subtotal + iva;
-    const costTotal = (saleDraft.items || []).reduce((acc, it) => acc + Number(it.qty || 0) * Number(it.unitCost || 0), 0);
+    const itemsCost = (saleDraft.items || []).reduce((acc, it) => acc + Number(it.qty || 0) * Number(it.unitCost || 0), 0);
+    const costTotal = itemsCost + Math.max(0, Number(saleDraft.shippingCost || 0));
     const profit = total - costTotal;
     return { itemsSubtotal, subtotal, iva, total, costTotal, profit };
   }, [saleDraft]);
@@ -241,23 +267,76 @@ const App: React.FC = () => {
     setSaleDraft((s) => ({ ...s, items: [...(s.items || []), { name: '', qty: 1, unitPrice: 0, unitCost: 0 }] }));
   };
 
+  const callCalendarWebhook = async (action: string, payload: any): Promise<{ ok: boolean; eventId?: string; htmlLink?: string; error?: string } | null> => {
+    const url = String(settings.calendarWebhookUrl || '').trim();
+    const secret = String(settings.calendarWebhookSecret || '').trim();
+    if (!url || !secret) return null;
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ secret, action, payload })
+    });
+    const data: any = await res.json().catch(() => ({}));
+    if (!res.ok || data?.ok === false) {
+      const msg = data?.error || `Webhook error (${res.status})`;
+      throw new Error(msg);
+    }
+    return data;
+  };
+
   const createSale = async () => {
     try {
       setUiMessage(null);
       if (!(saleDraft.items || []).some((x) => String(x.name || '').trim() && Number(x.qty || 0) > 0)) {
         return setUiMessage('Agrega al menos 1 concepto.');
       }
-      const patientName = saleDraft.patientId ? (patientById.get(saleDraft.patientId)?.name || '') : (saleDraft.patientName || '');
+      const patientObj = saleDraft.patientId ? patientById.get(saleDraft.patientId) : null;
+      const patientName = patientObj?.name || saleDraft.patientName || '';
+      const deliveryEstimatedAt = saleDraft.deliveryEstimatedAt ? String(saleDraft.deliveryEstimatedAt) : '';
+
       const id = await dbService.createSale({
         patientId: saleDraft.patientId,
         patientName,
+        patientEmail: patientObj?.email || '',
+        patientPhone: patientObj?.phone || '',
+        invoiceRequired: Boolean(saleDraft.invoiceRequired),
+        delivered: Boolean(saleDraft.delivered),
+        deliveryEstimatedAt,
+        providerPaid: Boolean(saleDraft.providerPaid),
+        providerDue: Number(saleDraft.providerDue || 0),
         items: saleDraft.items,
         shipping: Number(saleDraft.shipping || 0),
+        shippingCost: Number(saleDraft.shippingCost || 0),
         ivaRate: Number(saleDraft.ivaRate ?? 0.16),
         notes: saleDraft.notes
       });
+
+      // Follow-up: 11 months after estimated delivery
+      if (deliveryEstimatedAt) {
+        try {
+          const followUpAt = addMonthsIso(deliveryEstimatedAt, 11);
+          const resp = await callCalendarWebhook('createFollowUpEvent', {
+            when: followUpAt,
+            title: `Seguimiento plantillas - ${patientName || 'Paciente'}`,
+            description: `Diagnostic Support del Noroeste\nPaciente: ${patientName}\nTel: ${patientObj?.phone || ''}\nCorreo: ${patientObj?.email || ''}\nEntrega estimada: ${deliveryEstimatedAt}\n\nContacto: +52 612 169 2544`,
+            invitePatient: settings.calendarInvitePatient === true,
+            patientEmail: patientObj?.email || ''
+          });
+          if (resp?.eventId) {
+            await dbService.updateSale(id, { followUpAt, followUpCalendarEventId: resp.eventId } as any);
+          } else {
+            await dbService.updateSale(id, { followUpAt } as any);
+          }
+        } catch (err: any) {
+          // Don't block the sale creation; show message.
+          setUiMessage(`Venta registrada (${id}), pero no se pudo crear recordatorio: ${err?.message || err}`);
+          setTimeout(() => setUiMessage(null), 5000);
+        }
+      }
+
       setUiMessage(`Venta registrada: ${id}`);
-      setSaleDraft({ shipping: 0, ivaRate: 0.16, items: [{ name: '', qty: 1, unitPrice: 0, unitCost: 0 }] });
+      setSaleDraft({ shipping: 0, shippingCost: 0, ivaRate: 0.16, invoiceRequired: false, delivered: false, providerPaid: false, providerDue: 0, items: [{ name: '', qty: 1, unitPrice: 0, unitCost: 0 }] });
     } catch (e: any) {
       setUiMessage(e?.message || 'No se pudo registrar venta.');
     }
@@ -267,15 +346,41 @@ const App: React.FC = () => {
     const title = String(apptDraft.title || '').trim();
     if (!title) return setUiMessage('Título es requerido.');
     if (!apptDraft.start || !apptDraft.end) return setUiMessage('Fecha/hora inicio y fin son requeridas.');
-    const patientName = apptDraft.patientId ? (patientById.get(String(apptDraft.patientId))?.name || '') : (apptDraft.patientName || '');
+    const patientObj = apptDraft.patientId ? patientById.get(String(apptDraft.patientId)) : null;
+    const patientName = patientObj?.name || apptDraft.patientName || '';
+    const startIso = String(apptDraft.start);
+    const endIso = String(apptDraft.end);
+
     try {
-      await dbService.upsertAppointment({
+      const id = await dbService.upsertAppointment({
         ...apptDraft,
         title,
-        start: String(apptDraft.start),
-        end: String(apptDraft.end),
-        patientName
+        start: startIso,
+        end: endIso,
+        patientName,
+        patientEmail: patientObj?.email || '',
+        patientPhone: patientObj?.phone || ''
       } as any);
+
+      // Calendar automation
+      try {
+        const resp = await callCalendarWebhook('createAppointmentEvent', {
+          title: `Cita - ${patientName || title}`,
+          start: startIso,
+          end: endIso,
+          description: `Diagnostic Support del Noroeste\nPaciente: ${patientName}\nTel: ${patientObj?.phone || ''}\nCorreo: ${patientObj?.email || ''}\n\n${String(apptDraft.notes || '')}`,
+          invitePatient: settings.calendarInvitePatient === true,
+          patientEmail: patientObj?.email || ''
+        });
+        if (resp?.eventId) {
+          await dbService.updateAppointment(id, { calendarEventId: resp.eventId } as any);
+        }
+      } catch (err: any) {
+        // don't block
+        setUiMessage(`Cita guardada, pero no se pudo crear evento en calendario: ${err?.message || err}`);
+        setTimeout(() => setUiMessage(null), 5000);
+      }
+
       setApptDraft({ status: 'scheduled' });
       setUiMessage('Cita guardada.');
       setTimeout(() => setUiMessage(null), 1500);
@@ -648,6 +753,39 @@ const App: React.FC = () => {
               </div>
 
               <div style={{ height: 12 }} />
+              <div className="grid3">
+                <div>
+                  <label className="label">Costo de envío (tu costo)</label>
+                  <input className="input" type="number" value={saleDraft.shippingCost} onChange={(e) => setSaleDraft((s) => ({ ...s, shippingCost: Number(e.target.value) }))} />
+                </div>
+                <div>
+                  <label className="label">Entrega probable</label>
+                  <input className="input" type="date" value={(saleDraft.deliveryEstimatedAt || '').slice(0,10)} onChange={(e) => setSaleDraft((s) => ({ ...s, deliveryEstimatedAt: e.target.value }))} />
+                  <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>Con esto se agenda seguimiento automático a 11 meses (si Calendar está configurado).</div>
+                </div>
+                <div>
+                  <label className="label">Pago a proveedor (pendiente)</label>
+                  <input className="input" type="number" value={saleDraft.providerDue ?? 0} onChange={(e) => setSaleDraft((s) => ({ ...s, providerDue: Number(e.target.value) }))} />
+                </div>
+              </div>
+
+              <div style={{ height: 10 }} />
+              <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  <input type="checkbox" checked={saleDraft.invoiceRequired === true} onChange={(e) => setSaleDraft((s) => ({ ...s, invoiceRequired: e.target.checked }))} />
+                  <span>Requiere factura</span>
+                </label>
+                <label style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  <input type="checkbox" checked={saleDraft.delivered === true} onChange={(e) => setSaleDraft((s) => ({ ...s, delivered: e.target.checked }))} />
+                  <span>Entregado</span>
+                </label>
+                <label style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  <input type="checkbox" checked={saleDraft.providerPaid === true} onChange={(e) => setSaleDraft((s) => ({ ...s, providerPaid: e.target.checked }))} />
+                  <span>Proveedor pagado</span>
+                </label>
+              </div>
+
+              <div style={{ height: 12 }} />
               <label className="label">Notas</label>
               <textarea className="input" style={{ minHeight: 60 }} value={saleDraft.notes || ''} onChange={(e) => setSaleDraft((s) => ({ ...s, notes: e.target.value }))} />
 
@@ -815,6 +953,46 @@ const App: React.FC = () => {
                   }}>Quitar logo</button>
                 </div>
               ) : null}
+            </div>
+
+            <div className="card">
+              <h3 style={{ marginTop: 0 }}>Automatización (Google Calendar)</h3>
+              <div className="muted" style={{ lineHeight: 1.35 }}>
+                Para que SICE cree automáticamente eventos (citas + seguimiento a 11 meses), configura el webhook de
+                <b> Google Apps Script</b>.
+              </div>
+
+              <div style={{ height: 12 }} />
+              <label className="label">Webhook URL</label>
+              <input
+                className="input"
+                value={settings.calendarWebhookUrl || ''}
+                onChange={(e) => dbService.updateSiceSettings({ calendarWebhookUrl: e.target.value })}
+                placeholder="https://script.google.com/macros/s/.../exec"
+              />
+
+              <div style={{ height: 10 }} />
+              <label className="label">Secret</label>
+              <input
+                className="input"
+                value={settings.calendarWebhookSecret || ''}
+                onChange={(e) => dbService.updateSiceSettings({ calendarWebhookSecret: e.target.value })}
+                placeholder="(igual al SICE_WEBHOOK_SECRET del script)"
+              />
+
+              <div style={{ height: 10 }} />
+              <label style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={settings.calendarInvitePatient !== false}
+                  onChange={(e) => dbService.updateSiceSettings({ calendarInvitePatient: e.target.checked })}
+                />
+                <span>Invitar al paciente por correo (Google Calendar envía invitación)</span>
+              </label>
+
+              <div className="muted" style={{ marginTop: 10 }}>
+                Nota: esto manda invitaciones desde el calendario de la cuenta dedicada.
+              </div>
             </div>
 
             <div className="card">

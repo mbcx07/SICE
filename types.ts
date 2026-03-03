@@ -190,13 +190,29 @@ export interface Sale {
   consecutive: number;
   patientId?: string;
   patientName?: string;
+  patientEmail?: string;
+  patientPhone?: string;
+
+  // flags / logistics
+  invoiceRequired?: boolean;
+  delivered?: boolean;
+  deliveryEstimatedAt?: string; // ISO date (yyyy-mm-dd or full ISO)
+  deliveryActualAt?: string;    // ISO
+  providerPaid?: boolean;
+  providerDue?: number; // MXN
+
+  // follow-up (11 months after estimated delivery)
+  followUpAt?: string; // ISO
+  followUpCalendarEventId?: string;
+
   items: SaleLineItem[];
-  shipping: number; // pre-IVA
+  shipping: number; // charge to customer (pre-IVA)
+  shippingCost?: number; // cost you pay (pre-IVA)
   ivaRate: number; // default 0.16
   subtotal: number; // pre-IVA, includes shipping
   iva: number;
   total: number;
-  costTotal: number;
+  costTotal: number; // itemsCost + shippingCost
   profit: number;
   notes?: string;
   createdAt: string;
@@ -208,10 +224,13 @@ export interface Appointment {
   title: string;
   patientId?: string;
   patientName?: string;
+  patientEmail?: string;
+  patientPhone?: string;
   start: string; // ISO
   end: string;   // ISO
   status?: 'scheduled' | 'done' | 'cancelled';
   notes?: string;
+  calendarEventId?: string;
   createdAt: string;
   updatedAt?: string;
 }
@@ -220,6 +239,12 @@ export interface SiceSettings {
   id: 'global';
   themeColor: string;
   logoDataUrl?: string; // base64 data URL
+
+  // Google Apps Script webhook (Calendar automation)
+  calendarWebhookUrl?: string; // deployed web app URL
+  calendarWebhookSecret?: string; // shared secret
+  calendarInvitePatient?: boolean; // default true
+
   updatedAt?: string;
   updatedBy?: string;
 }
