@@ -32,3 +32,27 @@ exports.adminResetUserPassword = functions.https.onCall(async (data, context) =>
 
   return { ok: true };
 });
+
+// =====================
+// SICE (MVP) stubs
+// =====================
+
+// NOTE: Integración Google Calendar / email puede implementarse después.
+// Por ahora se deja un endpoint callable para no romper el contrato al conectarlo desde el front.
+exports.siceStubNotifyAppointment = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Debes iniciar sesión.');
+  }
+
+  const appointmentId = String(data?.appointmentId || '').trim();
+  if (!appointmentId) {
+    throw new functions.https.HttpsError('invalid-argument', 'appointmentId es requerido.');
+  }
+
+  return {
+    ok: true,
+    stub: true,
+    message: 'Stub: notificación/Calendar/email aún no implementada.',
+    appointmentId
+  };
+});

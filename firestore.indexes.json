@@ -65,6 +65,14 @@
         { "fieldPath": "tramiteId", "order": "ASCENDING" },
         { "fieldPath": "fecha", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "year", "order": "ASCENDING" },
+        { "fieldPath": "consecutive", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

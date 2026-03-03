@@ -165,6 +165,51 @@ service cloud.firestore {
       allow create, update, delete: if activeUser() && isAdmin();
     }
 
+    // =====================
+    // SICE (MVP) collections
+    // =====================
+
+    // Branding/settings (theme color + logo)
+    match /siceSettings/{docId} {
+      allow read: if activeUser();
+      allow create, update, delete: if activeUser() && isAdmin();
+    }
+
+    // Pacientes
+    match /patients/{id} {
+      allow read: if activeUser();
+      allow create, update: if activeUser();
+      allow delete: if activeUser() && isAdmin();
+    }
+
+    // Catálogo de productos/servicios
+    match /catalogItems/{id} {
+      allow read: if activeUser();
+      allow create, update: if activeUser();
+      allow delete: if activeUser() && isAdmin();
+    }
+
+    // Ventas
+    match /sales/{id} {
+      allow read: if activeUser();
+      allow create, update: if activeUser();
+      allow delete: if activeUser() && isAdmin();
+    }
+
+    // Contadores (folios)
+    match /counters/{id} {
+      allow read: if activeUser();
+      allow create, update: if activeUser();
+      allow delete: if activeUser() && isAdmin();
+    }
+
+    // Citas
+    match /appointments/{id} {
+      allow read: if activeUser();
+      allow create, update: if activeUser();
+      allow delete: if activeUser() && isAdmin();
+    }
+
     // Deny-all por defecto fuera de matches explícitos
   }
 }

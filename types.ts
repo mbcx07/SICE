@@ -79,14 +79,14 @@ export interface Tramite {
   dotacionNumero: number;
   requiereDictamenMedico: boolean;
   motivoRechazo?: string;
-  
+
   // Control de importes
   importeSolicitado: number;
   importeAutorizado?: number;
   costoSolicitud?: number;
   validadoPor?: string;
   fechaValidacionImporte?: string;
-  
+
   // Datos Receta
   folioRecetaImss: string;
   fechaExpedicionReceta: string;
@@ -95,16 +95,16 @@ export interface Tramite {
   medicionAnteojos?: string;
   clavePresupuestal: string;
   qnaInclusion?: string; // Formato 2026/003
-  
+
   // Fechas de proceso
   fechaRecepcionOptica?: string;
   fechaEntregaOptica?: string;
   fechaEntregaReal?: string;
-  
+
   // Checklist
   checklist: Record<TipoDocumento, boolean>;
   evidencias: Evidencia[];
-  
+
   // Firmas
   firmaSolicitante?: string;
   firmaAutorizacion?: string;
@@ -119,26 +119,107 @@ export interface Tramite {
     ultimoUsuario?: string;
     ultimoMotivoReimpresion?: string;
   };
+
+  eliminado?: boolean;
 }
 
 export interface Bitacora {
   id: string;
   tramiteId: string;
-  fecha: string;
-  usuario: string;
   accion: string;
-  descripcion: string;
-  categoria?: 'WORKFLOW' | 'IMPRESION' | 'SISTEMA';
-  datos?: Record<string, any>;
+  detalle: string;
+  fecha: string;
+  usuarioId: string;
+  usuarioNombre: string;
+  unidad?: string;
 }
 
 export interface User {
   id: string;
-  nombre: string;
+  uid: string;
   matricula: string;
-  role: Role;
+  nombre: string;
+  role: Role | string;
   unidad: string;
-  ooad: string;
   activo: boolean;
-  authEmail?: string;
+  createdAt?: string;
+  lastLoginAt?: string;
+}
+
+// =====================
+// SICE (MVP) domain
+// =====================
+
+export type CatalogItemType = 'product' | 'service';
+
+export interface CatalogItem {
+  id: string;
+  type: CatalogItemType;
+  name: string;
+  sku?: string;
+  unitPrice: number; // price before IVA
+  unitCost: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface Patient {
+  id: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface SaleLineItem {
+  catalogItemId?: string;
+  name: string;
+  qty: number;
+  unitPrice: number; // pre-IVA
+  unitCost: number;
+}
+
+export interface Sale {
+  id: string;
+  folio: string; // e.g. VTA-2026-000123
+  year: number;
+  consecutive: number;
+  patientId?: string;
+  patientName?: string;
+  items: SaleLineItem[];
+  shipping: number; // pre-IVA
+  ivaRate: number; // default 0.16
+  subtotal: number; // pre-IVA, includes shipping
+  iva: number;
+  total: number;
+  costTotal: number;
+  profit: number;
+  notes?: string;
+  createdAt: string;
+  createdBy?: string;
+}
+
+export interface Appointment {
+  id: string;
+  title: string;
+  patientId?: string;
+  patientName?: string;
+  start: string; // ISO
+  end: string;   // ISO
+  status?: 'scheduled' | 'done' | 'cancelled';
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface SiceSettings {
+  id: 'global';
+  themeColor: string;
+  logoDataUrl?: string; // base64 data URL
+  updatedAt?: string;
+  updatedBy?: string;
 }
