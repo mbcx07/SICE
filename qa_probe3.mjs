@@ -1,0 +1,10 @@
+import { chromium } from 'playwright';
+const browser=await chromium.launch({headless:true});
+const page=await browser.newPage();
+page.on('console',m=>console.log('console',m.type(),m.text()));
+page.on('requestfailed',r=>console.log('failed',r.url(),r.failure()?.errorText));
+page.on('response',r=>{ if(r.status()>=400) console.log('resp',r.status(),r.url());});
+await page.goto('http://127.0.0.1:4173',{waitUntil:'load'});
+await page.waitForTimeout(10000);
+console.log('root html', await page.locator('#root').innerHTML());
+await browser.close();

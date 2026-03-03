@@ -1,0 +1,71 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "tramites",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "beneficiario.entidadLaboral", "order": "ASCENDING" },
+        { "fieldPath": "fechaCreacion", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tramites",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "unidad", "order": "ASCENDING" },
+        { "fieldPath": "fechaCreacion", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tramites",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "estatus", "order": "ASCENDING" },
+        { "fieldPath": "fechaCreacion", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tramites",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "unidad", "order": "ASCENDING" },
+        { "fieldPath": "estatus", "order": "ASCENDING" },
+        { "fieldPath": "fechaCreacion", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tramites",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "unidad", "order": "ASCENDING" },
+        { "fieldPath": "fechaValidacionImporte", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tramites",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "estatus", "order": "ASCENDING" },
+        { "fieldPath": "fechaValidacionImporte", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tramites",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "unidad", "order": "ASCENDING" },
+        { "fieldPath": "estatus", "order": "ASCENDING" },
+        { "fieldPath": "fechaValidacionImporte", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "bitacora",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tramiteId", "order": "ASCENDING" },
+        { "fieldPath": "fecha", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

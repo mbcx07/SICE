@@ -1,0 +1,162 @@
+:root {
+  --brand-900: #003324;
+  --brand-700: #005c3f;
+  --brand-600: #006747;
+  --brand-500: #0a7b58;
+  --brand-100: #e6f3ee;
+  --brand-050: #f3faf7;
+  --surface: #ffffff;
+  --surface-soft: #f8fafc;
+  --border-soft: #e2e8f0;
+  --text-primary: #0f172a;
+  --text-muted: #64748b;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+}
+
+body {
+  background: linear-gradient(180deg, #f8fbfa 0%, #f8fafc 100%);
+  color: var(--text-primary);
+}
+
+.app-shell {
+  min-height: 100dvh;
+}
+
+.institutional-card {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 1.5rem;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
+}
+
+.institutional-card-soft {
+  background: var(--brand-050);
+  border: 1px solid #d5e9e0;
+  border-radius: 1.5rem;
+}
+
+.btn-institutional {
+  background-color: var(--brand-600);
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.btn-institutional:hover {
+  background-color: var(--brand-700);
+}
+
+.btn-institutional:active {
+  transform: translateY(1px);
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.75rem;
+  border-radius: 999px;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.625rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.field-label {
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.field-input {
+  width: 100%;
+  border: 1px solid var(--border-soft);
+  border-radius: 0.875rem;
+  padding: 0.85rem 1rem;
+  font-weight: 600;
+  background: #fff;
+}
+
+.field-input:focus {
+  outline: none;
+  border-color: var(--brand-600);
+  box-shadow: 0 0 0 3px rgb(0 103 71 / 0.12);
+}
+
+@media (max-width: 1023px) {
+  .mobile-scroll-x {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@page {
+  size: letter portrait;
+  margin: 8mm;
+}
+
+.print-sheet-letter {
+  width: 100%;
+  max-width: 216mm;
+  min-height: 279mm;
+  margin: 0 auto;
+  background: #fff;
+  color: #000;
+}
+
+@media print {
+  html,
+  body {
+    background: #fff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .print-stage {
+    background: #fff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    min-height: auto !important;
+  }
+
+  .print-container {
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  .print-sheet-letter {
+    width: 100% !important;
+    max-width: none !important;
+    min-height: auto !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    border: 1px solid #000 !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

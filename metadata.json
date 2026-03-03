@@ -1,0 +1,7 @@
+{
+  "name": "SISTRA - Sistema de Trámite de Anteojos",
+  "description": "Plataforma integral para el control, seguimiento y validación del trámite de dotación de anteojos y lentes de contacto, cumpliendo con la normativa de prestaciones institucionales.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

@@ -1,0 +1,170 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function me() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid));
+    }
+
+    function myData() {
+      return me().data;
+    }
+
+    // Soporta nombres de rol actuales y simplificados
+    function isAdmin() {
+      return signedIn() && (
+        myData().role == 'ADMIN_SISTEMA' ||
+        myData().role == 'admin'
+      );
+    }
+
+    function isCapturista() {
+      return signedIn() && (
+        myData().role == 'CAPTURISTA_UNIDAD' ||
+        myData().role == 'capturista'
+      );
+    }
+
+    function isConsulta() {
+      return signedIn() && (
+        myData().role == 'CONSULTA_CENTRAL' ||
+        myData().role == 'consulta'
+      );
+    }
+
+    function isValidador() {
+      return signedIn() && (
+        myData().role == 'VALIDADOR_PRESTACIONES' ||
+        myData().role == 'validador' ||
+        myData().role == 'AUTORIZADOR_JSDP_DSPNC'
+      );
+    }
+
+    function activeUser() {
+      return signedIn() && myData().activo == true;
+    }
+
+    function myUnidad() {
+      return myData().unidad;
+    }
+
+    function canReadTramiteData(tramiteData) {
+      return isAdmin() || isConsulta() || isValidador() ||
+        (isCapturista() && (
+          tramiteData.unidad == myUnidad() ||
+          tramiteData.beneficiario.entidadLaboral == myUnidad()
+        ));
+    }
+
+    function estatusChanged() {
+      return request.resource.data.estatus != resource.data.estatus;
+    }
+
+    function canSetStatusByRole(newStatus) {
+      return isAdmin() ||
+        (
+          isValidador() && (
+            newStatus in [
+              'EN_REVISION_DOCUMENTAL',
+              'RECHAZADO',
+              'AUTORIZADO',
+              'ENVIADO_A_OPTICA',
+              'EN_PROCESO_OPTICA',
+              'LISTO_PARA_ENTREGA',
+              'ENTREGADO',
+              'CERRADO'
+            ]
+          )
+        ) ||
+        (
+          isCapturista() && (
+            newStatus in ['BORRADOR', 'EN_REVISION_DOCUMENTAL', 'RECHAZADO']
+          )
+        );
+    }
+
+    // Usuarios
+    match /usuarios/{userId} {
+      // Admin ve/gestiona todos; cada usuario ve su propio perfil (aunque aún no esté activo)
+      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+
+      // Bootstrap inicial del administrador principal por matrícula
+      allow create: if (
+        signedIn() &&
+        request.auth.uid == userId &&
+        request.resource.data.matricula == '99032103' &&
+        request.resource.data.role == 'ADMIN_SISTEMA' &&
+        request.resource.data.activo == true
+      ) || (activeUser() && isAdmin());
+
+      // Edición/baja de usuarios solo por admin activo
+      allow update, delete: if activeUser() && isAdmin();
+    }
+
+    // Trámites
+    match /tramites/{tramiteId} {
+      // Todos los perfiles activos pueden consultar tablero institucional global.
+      allow read: if activeUser();
+
+      // Crear: admin/capturista/validador; consulta no
+      allow create: if activeUser() && (isAdmin() || isCapturista() || isValidador())
+        && request.resource.data.creadorId == request.auth.uid
+        && (
+          isAdmin() ||
+          request.resource.data.unidad == myUnidad() ||
+          request.resource.data.beneficiario.entidadLaboral == myUnidad()
+        );
+
+      // Update:
+      // - admin: libre
+      // - capturista: sólo su unidad y sin estatus fuera de su alcance
+      // - validador: global para validación/flujo
+      allow update: if activeUser() && (
+        isAdmin() ||
+        (
+          isCapturista() &&
+          canReadTramiteData(resource.data) &&
+          (!estatusChanged() || canSetStatusByRole(request.resource.data.estatus))
+        ) ||
+        (
+          isValidador() &&
+          (!estatusChanged() || canSetStatusByRole(request.resource.data.estatus))
+        )
+      );
+
+      // Borrado restringido a admin
+      allow delete: if activeUser() && isAdmin();
+    }
+
+    // Bitácora
+    match /bitacora/{bitacoraId} {
+      // Se permite lectura si el usuario puede leer el trámite vinculado
+      allow read: if activeUser() && (
+        isAdmin() || isConsulta() || isValidador() ||
+        (
+          isCapturista() &&
+          canReadTramiteData(
+            get(/databases/$(database)/documents/tramites/$(resource.data.tramiteId)).data
+          )
+        )
+      );
+
+      // Agregar bitácora: roles operativos (no consulta)
+      allow create: if activeUser() && (isAdmin() || isCapturista() || isValidador());
+
+      // Inmutabilidad operativa
+      allow update, delete: if activeUser() && isAdmin();
+    }
+
+    // Configuración global (presupuesto + métricas globales del tablero)
+    match /configuracion/{docId} {
+      allow read: if activeUser();
+      allow create, update, delete: if activeUser() && isAdmin();
+    }
+
+    // Deny-all por defecto fuera de matches explícitos
+  }
+}
