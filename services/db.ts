@@ -52,7 +52,7 @@ const authPersistenceReady = setPersistence(auth, browserSessionPersistence).cat
   console.warn('No se pudo establecer persistencia de sesion en navegador.', error);
 });
 
-const AUTH_EMAIL_DOMAIN = (import.meta as any).env?.VITE_AUTH_EMAIL_DOMAIN || 'sistra.local';
+const AUTH_EMAIL_DOMAIN = (import.meta as any).env?.VITE_AUTH_EMAIL_DOMAIN || 'diagnostic-support.local';
 
 let currentUserProfile: User | null = null;
 let creatorAuthPromise: Promise<ReturnType<typeof getAuth>> | null = null;
