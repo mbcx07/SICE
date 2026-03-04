@@ -1059,8 +1059,10 @@ const App: React.FC = () => {
             <div className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
                 <div>
-                  <h3 style={{ marginTop: 0, marginBottom: 0 }}>Tablero</h3>
-
+                  <h3 style={{ marginTop: 0, marginBottom: 0 }}>Tablero de Control</h3>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                    Periodo: <b>{new Date(cobranzaFrom + 'T00:00:00').toLocaleDateString('es-MX')}</b> – <b>{new Date(cobranzaTo + 'T00:00:00').toLocaleDateString('es-MX')}</b>
+                  </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <button className="btn" style={dashboardPreset === 'quincena' ? { borderColor: 'var(--brand)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--brand) 20%, transparent)' } : undefined} onClick={() => { setDashboardPreset('quincena'); applyDashboardPreset('quincena'); }}>Quincena</button>
