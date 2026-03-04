@@ -323,24 +323,42 @@ const App: React.FC = () => {
     return { ventas, costo, iva, mp, gananciaNeta, proveedorPendienteMensual, proveedorPendienteAcumulado, proveedorMes: thisMonth };
   }, [dashboardSales, sales]);
 
-  const dashboardMonthlySales = useMemo(() => {
-    const now = new Date();
-    const months: { key: string; label: string; total: number }[] = [];
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      const label = d.toLocaleDateString('es-MX', { month: 'short' });
-      months.push({ key, label: `${label} ${String(d.getFullYear()).slice(-2)}`, total: 0 });
+  const [dashboardChartMetric, setDashboardChartMetric] = useState<'ventas' | 'gananciaNeta'>('ventas');
+  const [dashboardChartBucket, setDashboardChartBucket] = useState<'mes' | 'quincena' | 'dia'>('mes');
+
+  const dashboardChartData = useMemo(() => {
+    const getValue = (s: Sale) => {
+      if (dashboardChartMetric === 'ventas') return Number(s.total || 0);
+      return Number(s.total || 0) - Number(s.costTotal || 0) - saleMpFeeTotal(s);
+    };
+
+    const toKey = (iso: string) => {
+      const d = new Date(String(iso || ''));
+      if (!Number.isFinite(d.getTime())) return null;
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      if (dashboardChartBucket === 'dia') return { key: `${y}-${m}-${day}`, label: `${day}/${m}` };
+      if (dashboardChartBucket === 'quincena') {
+        const q = d.getDate() <= 15 ? '1Q' : '2Q';
+        return { key: `${y}-${m}-${q}`, label: `${m}/${String(y).slice(-2)} ${q}` };
+      }
+      return { key: `${y}-${m}`, label: `${m}/${String(y).slice(-2)}` };
+    };
+
+    const agg = new Map<string, { key: string; label: string; total: number }>();
+    for (const s of (dashboardSales || [])) {
+      const k = toKey(String(s.createdAt || ''));
+      if (!k) continue;
+      const row = agg.get(k.key) || { key: k.key, label: k.label, total: 0 };
+      row.total += getValue(s);
+      agg.set(k.key, row);
     }
-    const idx = new Map(months.map((m) => [m.key, m] as const));
-    for (const s of (sales || [])) {
-      const k = String(s.createdAt || '').slice(0, 7);
-      const row = idx.get(k);
-      if (!row) continue;
-      row.total += Number(s.total || 0);
-    }
-    return months;
-  }, [sales]);
+
+    const out = Array.from(agg.values()).sort((a, b) => a.key.localeCompare(b.key));
+    if (dashboardChartBucket === 'dia' && out.length > 31) return out.slice(out.length - 31);
+    return out;
+  }, [dashboardSales, dashboardChartMetric, dashboardChartBucket]);
 
   const pendingByPatient = useMemo(() => {
     const by = new Map<string, { patientId?: string; patientName: string; pending: number; salesCount: number }>();
@@ -1042,7 +1060,7 @@ const App: React.FC = () => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
                 <div>
                   <h3 style={{ marginTop: 0, marginBottom: 0 }}>Tablero</h3>
-                  <div className="muted" style={{ fontSize: 12 }}>Filtros por fecha (ventas) + KPIs + evolución mensual.</div>
+
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <button className="btn" style={dashboardPreset === 'quincena' ? { borderColor: 'var(--brand)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--brand) 20%, transparent)' } : undefined} onClick={() => { setDashboardPreset('quincena'); applyDashboardPreset('quincena'); }}>Quincena</button>
@@ -1099,10 +1117,23 @@ const App: React.FC = () => {
               </div>
 
               <div style={{ height: 12 }} />
-              <div style={{ fontWeight: 800, marginBottom: 6 }}>Ventas por mes (últimos 12)</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
+                <div style={{ fontWeight: 800 }}>Gráfica</div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <select className="input" style={{ width: 160 }} value={dashboardChartMetric} onChange={(e) => setDashboardChartMetric(e.target.value as any)}>
+                    <option value="ventas">Ventas</option>
+                    <option value="gananciaNeta">Ganancia neta</option>
+                  </select>
+                  <select className="input" style={{ width: 160 }} value={dashboardChartBucket} onChange={(e) => setDashboardChartBucket(e.target.value as any)}>
+                    <option value="mes">Por mes</option>
+                    <option value="quincena">Por quincena</option>
+                    <option value="dia">Diario</option>
+                  </select>
+                </div>
+              </div>
               <div style={{ width: '100%', height: 240 }}>
                 <ResponsiveContainer>
-                  <BarChart data={dashboardMonthlySales} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
+                  <BarChart data={dashboardChartData} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="label" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 12 }} width={60} />
@@ -1172,7 +1203,7 @@ const App: React.FC = () => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
                 <div>
                   <h3 style={{ marginTop: 0, marginBottom: 0 }}>Cobranza</h3>
-                  <div className="muted" style={{ fontSize: 12 }}>Ventas con saldo pendiente (por periodo de venta).</div>
+
                 </div>
               </div>
 
@@ -1247,7 +1278,7 @@ const App: React.FC = () => {
 
             <div className="card">
               <h3 style={{ marginTop: 0 }}>Pagos pendientes (por paciente)</h3>
-              <div className="muted" style={{ marginTop: -6, fontSize: 12 }}>Suma de saldos pendientes de todas las ventas.</div>
+
               <div style={{ height: 10 }} />
               <div className="list" style={{ maxHeight: 360, overflow: 'auto' }}>
                 {pendingByPatient.slice(0, 20).map((r, idx) => (
@@ -1303,7 +1334,7 @@ const App: React.FC = () => {
 
             <div className="card">
               <h3 style={{ marginTop: 0 }}>Proveedor mensual</h3>
-              <div className="muted" style={{ marginTop: -6, fontSize: 12 }}>Agrupado por mes de <code>providerSentAt</code> (enviado a proveedor).</div>
+
               <div style={{ height: 10 }} />
               {(() => {
                 const byMonth = new Map<string, { month: string; count: number; total: number; pendingCount: number; pendingTotal: number }>();
@@ -1639,7 +1670,7 @@ const App: React.FC = () => {
                 <div>
                   <label className="label">Pago a proveedor (pendiente)</label>
                   <input className="input" type="number" value={saleDraft.providerDue ?? 0} onChange={(e) => setSaleDraft((s) => ({ ...s, providerDue: Number(e.target.value) }))} />
-                  <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>Si es 0, no aparece como pendiente en Tablero.</div>
+
                 </div>
               </div>
 
