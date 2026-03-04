@@ -87,12 +87,13 @@ const App: React.FC = () => {
     delivered?: boolean;
     providerPaid?: boolean;
     providerDue?: number;
+    providerSentAt?: string;
     shipping: number; // charge
     shippingCost: number; // cost
     ivaRate: number;
     notes?: string;
     items: SaleLineItem[];
-  }>(() => ({ shipping: 0, shippingCost: 0, ivaRate: 0.16, invoiceRequired: false, delivered: false, providerPaid: false, providerDue: 0, items: [{ name: '', qty: 1, unitPrice: 0, unitCost: 0 }] }));
+  }>(() => ({ shipping: 0, shippingCost: 0, ivaRate: 0.16, invoiceRequired: false, delivered: false, providerPaid: false, providerDue: 0, providerSentAt: '', items: [{ name: '', qty: 1, unitPrice: 0, unitCost: 0 }] }));
   const [salePrintTarget, setSalePrintTarget] = useState<Sale | null>(null);
 
   // appointments
@@ -313,6 +314,7 @@ const App: React.FC = () => {
         deliveryEstimatedAt,
         providerPaid: Boolean(saleDraft.providerPaid),
         providerDue: Number(saleDraft.providerDue || 0),
+        providerSentAt: saleDraft.providerSentAt ? String(saleDraft.providerSentAt) : '',
         items: saleDraft.items,
         shipping: Number(saleDraft.shipping || 0),
         shippingCost: Number(saleDraft.shippingCost || 0),
@@ -348,7 +350,7 @@ const App: React.FC = () => {
       }
 
       setUiMessage(`Venta registrada: ${id}`);
-      setSaleDraft({ shipping: 0, shippingCost: 0, ivaRate: 0.16, invoiceRequired: false, delivered: false, providerPaid: false, providerDue: 0, items: [{ name: '', qty: 1, unitPrice: 0, unitCost: 0 }] });
+      setSaleDraft({ shipping: 0, shippingCost: 0, ivaRate: 0.16, invoiceRequired: false, delivered: false, providerPaid: false, providerDue: 0, providerSentAt: '', items: [{ name: '', qty: 1, unitPrice: 0, unitCost: 0 }] });
     } catch (e: any) {
       setUiMessage(e?.message || 'No se pudo registrar venta.');
     }
@@ -586,12 +588,56 @@ const App: React.FC = () => {
         {tab === 'dashboard' ? (
           <div className="grid2">
             <div className="card">
-              <h3 style={{ marginTop: 0 }}>Resumen</h3>
-              <div className="muted">(En construcción) Aquí irá el tablero con filtros por quincena/mes/año y gráficas.</div>
+              <h3 style={{ marginTop: 0 }}>Pendiente proveedor</h3>
+              <div className="muted" style={{ marginTop: -6 }}>Ventas con pago a proveedor pendiente (para confirmar envío/pago).</div>
+              <div style={{ height: 10 }} />
+              {sales
+                .filter((s) => !s.providerPaid && Number(s.providerDue || 0) > 0)
+                .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+                .slice(0, 20)
+                .map((s) => (
+                  <div key={s.id} className="listRow" style={{ padding: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700 }}>{s.patientName || '(Sin nombre)'}</div>
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        {new Date(s.createdAt).toLocaleDateString('es-MX')} · Pendiente proveedor: <b>{formatCurrency(Number(s.providerDue || 0))}</b>
+                        {s.providerSentAt ? ` · Enviado: ${String(s.providerSentAt).slice(0, 10)}` : ''}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <button className="btn" onClick={async () => {
+                        const today = new Date().toISOString().slice(0, 10);
+                        await dbService.updateSale(s.id, { providerSentAt: today } as any);
+                      }}>Marcar enviado</button>
+                      <button className="btnPrimary" onClick={async () => {
+                        await dbService.updateSale(s.id, { providerPaid: true } as any);
+                      }}>Marcar pagado</button>
+                    </div>
+                  </div>
+                ))}
+              {!sales.some((s) => !s.providerPaid && Number(s.providerDue || 0) > 0) ? (
+                <div className="muted">Sin pendientes con proveedor.</div>
+              ) : null}
+              <div className="muted" style={{ marginTop: 10, fontSize: 12 }}>
+                Nota: este listado es el que usaremos para el recordatorio de los sábados.
+              </div>
             </div>
+
             <div className="card">
-              <h3 style={{ marginTop: 0 }}>Agenda</h3>
-              <div className="muted">(En construcción) Próximas citas, entregas, pendientes y renovaciones.</div>
+              <h3 style={{ marginTop: 0 }}>Agenda (resumen)</h3>
+              <div className="muted">Próximas citas (semana actual):</div>
+              <div style={{ height: 10 }} />
+              {appointments
+                .slice()
+                .sort((a, b) => String(a.start).localeCompare(String(b.start)))
+                .slice(0, 10)
+                .map((a) => (
+                  <div key={a.id} className="listItem" style={{ alignItems: 'flex-start' }}>
+                    <div style={{ fontWeight: 700 }}>{new Date(a.start).toLocaleString('es-MX', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
+                    <div>{a.patientName ? `${a.patientName} · ` : ''}{a.title}</div>
+                  </div>
+                ))}
+              {!appointments.length ? <div className="muted">Sin citas en esta semana.</div> : null}
             </div>
           </div>
         ) : null}
@@ -793,6 +839,7 @@ const App: React.FC = () => {
                 <div>
                   <label className="label">Pago a proveedor (pendiente)</label>
                   <input className="input" type="number" value={saleDraft.providerDue ?? 0} onChange={(e) => setSaleDraft((s) => ({ ...s, providerDue: Number(e.target.value) }))} />
+                  <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>Si es 0, no aparece como pendiente en Tablero.</div>
                 </div>
               </div>
 

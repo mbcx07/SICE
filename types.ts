@@ -200,6 +200,7 @@ export interface Sale {
   deliveryActualAt?: string;    // ISO
   providerPaid?: boolean;
   providerDue?: number; // MXN
+  providerSentAt?: string; // ISO date when requested/sent to provider
 
   // follow-up (11 months after estimated delivery)
   followUpAt?: string; // ISO

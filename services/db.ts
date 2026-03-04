@@ -1189,6 +1189,7 @@ export const dbService = {
     deliveryActualAt?: string;
     providerPaid?: boolean;
     providerDue?: number;
+    providerSentAt?: string;
 
     items: SaleLineItem[];
     shipping?: number;
@@ -1249,6 +1250,7 @@ export const dbService = {
         deliveryActualAt: input.deliveryActualAt ? String(input.deliveryActualAt) : '',
         providerPaid: Boolean(input.providerPaid),
         providerDue: Number(input.providerDue || 0),
+        providerSentAt: (input as any).providerSentAt ? String((input as any).providerSentAt) : '',
 
         items: cleanItems,
         shipping,
