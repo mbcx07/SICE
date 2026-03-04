@@ -86,17 +86,30 @@ service cloud.firestore {
         );
     }
 
+    function isSiceOwner() {
+      return signedIn() && (request.auth.token.email == 'dgnstcspprtdlnrst@gmail.com');
+    }
+
     // Usuarios
     match /usuarios/{userId} {
       // Admin ve/gestiona todos; cada usuario ve su propio perfil (aunque aún no esté activo)
       allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
 
       // Bootstrap inicial del administrador principal por matrícula
+      // + Bootstrap SICE owner (Luisana) by email.
       allow create: if (
         signedIn() &&
         request.auth.uid == userId &&
-        request.resource.data.matricula == '99032103' &&
-        request.resource.data.role == 'ADMIN_SISTEMA' &&
+        (
+          (
+            request.resource.data.matricula == '99032103' &&
+            request.resource.data.role == 'ADMIN_SISTEMA'
+          ) || (
+            isSiceOwner() &&
+            request.resource.data.role == 'ADMIN_SISTEMA' &&
+            request.resource.data.authEmail == request.auth.token.email
+          )
+        ) &&
         request.resource.data.activo == true
       ) || (activeUser() && isAdmin());
 
