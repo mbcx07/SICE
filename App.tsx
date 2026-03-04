@@ -431,7 +431,8 @@ const App: React.FC = () => {
 
   const salePreview = useMemo(() => {
     const itemsSubtotal = (saleDraft.items || []).reduce((acc, it) => acc + Number(it.qty || 0) * Number(it.unitPrice || 0), 0);
-    const shipping = Number(saleDraft.shipping || 0);
+    // Cliente envío: ya no se contabiliza.
+    const shipping = 0;
     const subtotal = Math.max(0, itemsSubtotal + shipping);
     const ivaRate = Number(saleDraft.ivaRate ?? 0.16);
     const iva = Math.max(0, subtotal * ivaRate);
@@ -552,7 +553,7 @@ const App: React.FC = () => {
         providerDue: Number(saleDraft.providerDue || 0),
         providerSentAt: saleDraft.providerSentAt ? String(saleDraft.providerSentAt) : '',
         items: saleDraft.items,
-        shipping: Number(saleDraft.shipping || 0),
+        shipping: 0,
         shippingCost: Number(saleDraft.shippingCost || 0),
         ivaRate: Number(saleDraft.ivaRate ?? 0.16),
         notes: saleDraft.notes
@@ -561,7 +562,7 @@ const App: React.FC = () => {
       // Follow-up: 11 months after estimated delivery
       if (deliveryEstimatedAt) {
         try {
-          const followUpAt = addMonthsIso(deliveryEstimatedAt, 11);
+          const followUpAt = addMonthsIso(deliveryEstimatedAt, 12);
           const resp = await callCalendarWebhook('createFollowUpEvent', {
             saleId: id,
             when: followUpAt,
@@ -1640,10 +1641,6 @@ const App: React.FC = () => {
               <div style={{ height: 12 }} />
               <div className="grid3">
                 <div>
-                  <label className="label">Envío (pre-IVA)</label>
-                  <input className="input" type="number" value={saleDraft.shipping} onChange={(e) => setSaleDraft((s) => ({ ...s, shipping: Number(e.target.value) }))} />
-                </div>
-                <div>
                   <label className="label">IVA</label>
                   <select className="input" value={String(saleDraft.ivaRate)} onChange={(e) => setSaleDraft((s) => ({ ...s, ivaRate: Number(e.target.value) }))}>
                     <option value="0.16">16%</option>
@@ -1660,6 +1657,7 @@ const App: React.FC = () => {
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Utilidad</span><b>{formatCurrency(salePreview.profit)}</b></div>
                   </div>
                 </div>
+                <div />
               </div>
 
               <div style={{ height: 12 }} />

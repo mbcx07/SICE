@@ -157,8 +157,14 @@ export interface CatalogItem {
   type: CatalogItemType;
   name: string;
   sku?: string;
-  unitPrice: number; // price before IVA
-  unitCost: number;
+
+  // Business pricing
+  unitPrice: number; // sale price before IVA
+  unitCost: number;  // provider cost
+
+  // SICE-specific flags
+  isTemplate?: boolean; // when true, enables renewal follow-up logic
+
   active: boolean;
   createdAt: string;
   updatedAt?: string;

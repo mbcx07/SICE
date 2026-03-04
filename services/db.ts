@@ -1306,7 +1306,8 @@ export const dbService = {
 
     const year = new Date().getFullYear();
     const ivaRate = Number.isFinite(Number(input.ivaRate)) ? Number(input.ivaRate) : 0.16;
-    const shipping = Number(input.shipping || 0);
+    // Client shipping is no longer tracked.
+    const shipping = 0;
     const shippingCost = Number((input as any).shippingCost || 0);
     const items = Array.isArray(input.items) ? input.items : [];
 
