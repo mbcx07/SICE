@@ -16,7 +16,8 @@ import {
   deleteDoc,
   onSnapshot,
   increment,
-  runTransaction
+  runTransaction,
+  serverTimestamp
 } from "firebase/firestore";
 import {
   getAuth,
@@ -31,7 +32,7 @@ import {
   reauthenticateWithCredential,
   updatePassword
 } from "firebase/auth";
-import { Tramite, Bitacora, Role, User, EstatusWorkflow, TipoBeneficiario, Patient, CatalogItem, Sale, Appointment, SiceSettings, SaleLineItem } from '../types';
+import { Tramite, Bitacora, Role, User, EstatusWorkflow, TipoBeneficiario, Patient, CatalogItem, Sale, Appointment, SiceSettings, SaleLineItem, IntakeRequest } from '../types';
 import { validateWorkflowTransition } from './workflow';
 
 const firebaseConfig = {
@@ -52,7 +53,7 @@ const authPersistenceReady = setPersistence(auth, browserSessionPersistence).cat
   console.warn('No se pudo establecer persistencia de sesion en navegador.', error);
 });
 
-const AUTH_EMAIL_DOMAIN = (import.meta as any).env?.VITE_AUTH_EMAIL_DOMAIN || 'sistra.local';
+const AUTH_EMAIL_DOMAIN = (import.meta as any).env?.VITE_AUTH_EMAIL_DOMAIN || 'diagnostic-support.local';
 
 let currentUserProfile: User | null = null;
 let creatorAuthPromise: Promise<ReturnType<typeof getAuth>> | null = null;
@@ -172,9 +173,12 @@ const resolveTramiteImporte = (t: any): number => {
 const PRIMARY_ADMIN_MATRICULA = '99032103';
 const MATRICULA_EMAIL_OVERRIDES: Record<string, string> = {
   '99032103': 'moises.beltran@imss.gob.mx',
+  // SICE: allow simple usernames
+  'LUISANA': 'dgnstcspprtdlnrst@gmail.com',
 };
 const MATRICULA_EMAIL_ALIASES: Record<string, string[]> = {
   '99032103': ['moises.beltran@imss.gob.mx', 'moises.beltranx7@gmail.com'],
+  'LUISANA': ['dgnstcspprtdlnrst@gmail.com'],
 };
 const matriculaToEmail = (matricula: string) => {
   const normalized = normalizeMatricula(matricula);
@@ -231,6 +235,30 @@ const bootstrapPrimaryAdminProfile = async (uid: string, matricula: string, emai
   await setDoc(doc(db, 'usuarios', uid), bootstrapUser, { merge: true });
 };
 
+const bootstrapSiceUserProfile = async (uid: string, matriculaLike: string, email: string) => {
+  const normalized = normalizeMatricula(matriculaLike || '');
+  // SICE: allow a small set of simple usernames to bootstrap into usuarios/{uid}
+  const allowed = new Set(['LUISANA', 'DGNS', 'DIAGNOSTIC', 'ADMIN']);
+  const isAllowed = allowed.has(normalized) || email.toLowerCase() === 'dgnstcspprtdlnrst@gmail.com';
+  if (!isAllowed) return;
+
+  const display = normalized === 'LUISANA' ? 'Luisana' : (email.split('@')[0] || normalized);
+
+  const bootstrapUser: any = {
+    id: uid,
+    nombre: display,
+    matricula: normalized || 'USER',
+    role: Role.ADMIN_SISTEMA,
+    unidad: 'CENTRAL',
+    ooad: 'BCS',
+    activo: true,
+    authEmail: email,
+    createdAt: nowIso()
+  };
+
+  await setDoc(doc(db, 'usuarios', uid), bootstrapUser, { merge: true });
+};
+
 export type AppTab = 'dashboard' | 'tramites' | 'nuevo' | 'central' | 'adminUsers';
 
 export const TABS_BY_ROLE: Record<Role, AppTab[]> = {
@@ -242,7 +270,7 @@ export const TABS_BY_ROLE: Record<Role, AppTab[]> = {
 };
 
 export const VALIDATION_RULES = {
-  LOGIN_PASSWORD_MIN: 10,
+  LOGIN_PASSWORD_MIN: 4,
   NSS_REGEX: /^\d{10,11}$/,
   DIAGNOSTICO_MIN_CHARS: 10
 };
@@ -387,7 +415,13 @@ export const ensureSession = async (): Promise<User | null> => {
     const firebaseUser = await waitForAuthState();
     if (!firebaseUser) return null;
 
-    const userDoc = await getDoc(doc(db, 'usuarios', firebaseUser.uid));
+    let userDoc = await getDoc(doc(db, 'usuarios', firebaseUser.uid));
+    if (!userDoc.exists()) {
+      // SICE bootstrap: if the authenticated user is allowed, create profile automatically.
+      const email = String(firebaseUser.email || '');
+      await bootstrapSiceUserProfile(firebaseUser.uid, email.split('@')[0] || 'USER', email);
+      userDoc = await getDoc(doc(db, 'usuarios', firebaseUser.uid));
+    }
     if (!userDoc.exists()) {
       await signOut(auth);
       clearSession();
@@ -411,15 +445,20 @@ export const ensureSession = async (): Promise<User | null> => {
 };
 
 export const loginWithMatricula = async (matricula: string, password: string): Promise<User> => {
-  const matriculaNormalized = normalizeMatricula(matricula || '');
-  const loginValidationError = validateLoginInput(matricula, password);
+  const rawUser = String(matricula || '').trim();
+  const matriculaNormalized = normalizeMatricula(rawUser);
+  const loginValidationError = validateLoginInput(rawUser, password);
   if (loginValidationError) {
     throw new AuthError('INVALID_INPUT', loginValidationError);
   }
 
   try {
     await authPersistenceReady;
-    const candidates = matriculaToEmailCandidates(matriculaNormalized);
+
+    // If the user typed an email, use it directly.
+    const candidates = rawUser.includes('@')
+      ? [rawUser]
+      : matriculaToEmailCandidates(matriculaNormalized);
 
     let lastAuthError: any = null;
     for (const email of candidates) {
@@ -442,12 +481,15 @@ export const loginWithMatricula = async (matricula: string, password: string): P
           if (matriculaNormalized === PRIMARY_ADMIN_MATRICULA) {
             await bootstrapPrimaryAdminProfile(cred.user.uid, matriculaNormalized, email);
             userDoc = await getDoc(doc(db, 'usuarios', cred.user.uid));
+          } else {
+            await bootstrapSiceUserProfile(cred.user.uid, matriculaNormalized, email);
+            userDoc = await getDoc(doc(db, 'usuarios', cred.user.uid));
           }
         }
 
         if (!userDoc.exists()) {
           await signOut(auth);
-          throw new AuthError('INVALID_SESSION', 'Tu cuenta no esta mapeada en usuarios/{uid}.');
+          throw new AuthError('INVALID_SESSION', 'Tu cuenta no está habilitada en el sistema.');
         }
 
         const user = { id: cred.user.uid, ...(userDoc.data() as Omit<User, 'id'>) } as User;
@@ -472,17 +514,17 @@ export const loginWithMatricula = async (matricula: string, password: string): P
 
     const finalCode = lastAuthError?.code || '';
     if (finalCode === 'auth/invalid-credential' || finalCode === 'auth/user-not-found' || finalCode === 'auth/wrong-password') {
-      throw new AuthError('INVALID_CREDENTIALS', 'Matricula o contrasena incorrecta.');
+      throw new AuthError('INVALID_CREDENTIALS', 'Usuario o contraseña incorrecta.');
     }
 
-    throw new AuthError('INVALID_CREDENTIALS', 'Matricula o contrasena incorrecta.');
+    throw new AuthError('INVALID_CREDENTIALS', 'Usuario o contraseña incorrecta.');
   } catch (error: any) {
     if (error instanceof AuthError) throw error;
     const code = error?.code || '';
     if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
-      throw new AuthError('INVALID_CREDENTIALS', 'Matricula o contrasena incorrecta.');
+      throw new AuthError('INVALID_CREDENTIALS', 'Usuario o contraseña incorrecta.');
     }
-    throw new AuthError('INVALID_CREDENTIALS', 'Matricula o contrasena incorrecta.');
+    throw new AuthError('INVALID_CREDENTIALS', 'Usuario o contraseña incorrecta.');
   }
 };
 
@@ -1016,7 +1058,7 @@ export const dbService = {
     await setDoc(doc(db, 'siceSettings', 'global'), {
       ...patch,
       updatedAt: nowIso(),
-      updatedBy: user.uid
+      updatedBy: (user as any).uid || (user as any).id
     }, { merge: true });
   },
 
@@ -1040,6 +1082,90 @@ export const dbService = {
       });
     });
     return () => unsub();
+  },
+
+  // Public intake (no auth required)
+  async createIntake(input: { fullName: string; phone: string; email: string; residence: string }): Promise<string> {
+    const payload: any = {
+      fullName: String(input.fullName || '').trim(),
+      phone: String(input.phone || '').trim(),
+      email: String(input.email || '').trim(),
+      residence: String(input.residence || '').trim(),
+      status: 'new',
+      createdAt: serverTimestamp()
+    };
+    const ref = await addDoc(collection(db, 'intakes'), payload);
+    return ref.id;
+  },
+
+  // (owner) view intake
+  watchIntakes(onValue: (items: IntakeRequest[]) => void): () => void {
+    const q = query(collection(db, 'intakes'), orderBy('createdAt', 'desc'), limit(200));
+    const unsub = onSnapshot(q, (snap) => {
+      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as IntakeRequest[];
+      onValue(items);
+    }, () => onValue([]));
+    return () => unsub();
+  },
+
+  async updateIntake(id: string, patch: Partial<IntakeRequest>): Promise<void> {
+    const user = await ensureSession();
+    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
+    await updateDoc(doc(db, 'intakes', id), { ...patch } as any);
+  },
+
+  async deleteIntake(id: string): Promise<void> {
+    const user = await ensureSession();
+    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
+    await deleteDoc(doc(db, 'intakes', id));
+  },
+
+  async markIntakeApproved(id: string): Promise<void> {
+    const user = await ensureSession();
+    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
+    await updateDoc(doc(db, 'intakes', id), { status: 'approved', approvedAt: serverTimestamp() } as any);
+  },
+
+  async markIntakeRejected(id: string): Promise<void> {
+    const user = await ensureSession();
+    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
+    await updateDoc(doc(db, 'intakes', id), { status: 'rejected', approvedAt: serverTimestamp() } as any);
+  },
+
+  async createOrUpdatePatientFromIntake(input: { fullName: string; phone: string; email: string; residence: string }): Promise<string> {
+    const user = await ensureSession();
+    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
+
+    const name = String(input.fullName || '').trim();
+    const phone = String(input.phone || '').trim();
+    const email = String(input.email || '').trim();
+    const residence = String(input.residence || '').trim();
+
+    // Try match by phone first
+    if (phone) {
+      const qPhone = query(collection(db, 'patients'), where('phone', '==', phone), limit(1));
+      const snap = await getDocs(qPhone);
+      if (!snap.empty) {
+        const d = snap.docs[0];
+        await setDoc(doc(db, 'patients', d.id), { name, phone, email, notesGeneral: `Residencia: ${residence}`, updatedAt: nowIso() } as any, { merge: true });
+        return d.id;
+      }
+    }
+
+    // Then match by email
+    if (email) {
+      const qEmail = query(collection(db, 'patients'), where('email', '==', email), limit(1));
+      const snap = await getDocs(qEmail);
+      if (!snap.empty) {
+        const d = snap.docs[0];
+        await setDoc(doc(db, 'patients', d.id), { name, phone, email, notesGeneral: `Residencia: ${residence}`, updatedAt: nowIso() } as any, { merge: true });
+        return d.id;
+      }
+    }
+
+    // Otherwise create a new patient
+    const newId = await this.upsertPatient({ name, phone, email, notesGeneral: `Residencia: ${residence}` } as any);
+    return newId;
   },
 
   // Catalog
@@ -1128,6 +1254,25 @@ export const dbService = {
   },
 
   // Sales (with annual folio counter)
+  watchSalesByPatient(patientId: string, onValue: (items: Sale[]) => void): () => void {
+    const pid = String(patientId || '').trim();
+    if (!pid) {
+      onValue([]);
+      return () => {};
+    }
+    const q = query(
+      collection(db, 'sales'),
+      where('patientId', '==', pid),
+      orderBy('createdAt', 'desc'),
+      limit(200)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Sale[];
+      onValue(items);
+    }, () => onValue([]));
+    return () => unsub();
+  },
+
   async watchSales(year: number, onValue: (items: Sale[]) => void): Promise<() => void> {
     const q = query(collection(db, 'sales'), where('year', '==', year), orderBy('consecutive', 'desc'), limit(2000));
     const unsub = onSnapshot(q, (snap) => {
@@ -1148,6 +1293,7 @@ export const dbService = {
     deliveryActualAt?: string;
     providerPaid?: boolean;
     providerDue?: number;
+    providerSentAt?: string;
 
     items: SaleLineItem[];
     shipping?: number;
@@ -1208,8 +1354,10 @@ export const dbService = {
         deliveryActualAt: input.deliveryActualAt ? String(input.deliveryActualAt) : '',
         providerPaid: Boolean(input.providerPaid),
         providerDue: Number(input.providerDue || 0),
+        providerSentAt: (input as any).providerSentAt ? String((input as any).providerSentAt) : '',
 
         items: cleanItems,
+        payments: [],
         shipping,
         shippingCost,
         ivaRate,

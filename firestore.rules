@@ -86,17 +86,30 @@ service cloud.firestore {
         );
     }
 
+    function isSiceOwner() {
+      return signedIn() && (request.auth.token.email == 'dgnstcspprtdlnrst@gmail.com');
+    }
+
     // Usuarios
     match /usuarios/{userId} {
       // Admin ve/gestiona todos; cada usuario ve su propio perfil (aunque aún no esté activo)
       allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
 
       // Bootstrap inicial del administrador principal por matrícula
+      // + Bootstrap SICE owner (Luisana) by email.
       allow create: if (
         signedIn() &&
         request.auth.uid == userId &&
-        request.resource.data.matricula == '99032103' &&
-        request.resource.data.role == 'ADMIN_SISTEMA' &&
+        (
+          (
+            request.resource.data.matricula == '99032103' &&
+            request.resource.data.role == 'ADMIN_SISTEMA'
+          ) || (
+            isSiceOwner() &&
+            request.resource.data.role == 'ADMIN_SISTEMA' &&
+            request.resource.data.authEmail == request.auth.token.email
+          )
+        ) &&
         request.resource.data.activo == true
       ) || (activeUser() && isAdmin());
 
@@ -208,6 +221,14 @@ service cloud.firestore {
       allow read: if activeUser();
       allow create, update: if activeUser();
       allow delete: if activeUser() && isAdmin();
+    }
+
+    // Formulario público (registro de paciente antes de agendar)
+    match /intakes/{id} {
+      // Permitir que cualquiera envíe un registro (sin login)
+      allow create: if true;
+      // Solo perfiles activos pueden ver/gestionar
+      allow read, update, delete: if activeUser();
     }
 
     // Deny-all por defecto fuera de matches explícitos

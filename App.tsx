@@ -9,10 +9,10 @@ import {
   AuthError,
   dbService
 } from './services/db';
-import type { Appointment, CatalogItem, Patient, Sale, SaleLineItem, SiceSettings, User } from './types';
-import { CalendarDays, LogOut, Settings as SettingsIcon, Users, ShoppingCart, Package, KeyRound, Printer, Trash2, PlusCircle, Search } from 'lucide-react';
+import type { Appointment, CatalogItem, Patient, Sale, SaleLineItem, SalePayment, SalePaymentMethod, SiceSettings, User, IntakeRequest } from './types';
+import { CalendarDays, LogOut, Settings as SettingsIcon, Users, ShoppingCart, Package, KeyRound, Printer, Trash2, PlusCircle, Search, LayoutDashboard, ClipboardList } from 'lucide-react';
 
-type Tab = 'patients' | 'sales' | 'appointments' | 'settings';
+type Tab = 'dashboard' | 'patients' | 'sales' | 'appointments' | 'intakes' | 'settings';
 
 const formatCurrency = (value: number) => `$${Number(value || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const clampColor = (v: string) => (String(v || '').trim() || '#0ea5e9');
@@ -59,18 +59,31 @@ function addMonthsIso(baseIso: string, months: number): string {
 const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
-  const [tab, setTab] = useState<Tab>('patients');
+  const [tab, setTab] = useState<Tab>('dashboard');
   const [error, setError] = useState<string | null>(null);
   const [uiMessage, setUiMessage] = useState<string | null>(null);
 
   // settings
   const [settings, setSettings] = useState<SiceSettings>({ id: 'global', themeColor: '#2b5ea7', calendarInvitePatient: true });
-  const defaultLogoUrl = '/diagnostic-support-del-noroeste.jpg';
+  // Use BASE_URL so it works on GitHub Pages (/SICE/)
+  const defaultLogoUrl = `${(import.meta as any).env?.BASE_URL || '/'}diagnostic-support-del-noroeste.jpg`;
 
   // patients
   const [patients, setPatients] = useState<Patient[]>([]);
   const [patientSearch, setPatientSearch] = useState('');
   const [patientDraft, setPatientDraft] = useState<Partial<Patient>>({});
+  const [patientSales, setPatientSales] = useState<Sale[]>([]);
+
+  // public intake
+  const isPublicRegister = typeof window !== 'undefined' && window.location.hash.toLowerCase().includes('registro');
+  const [intakes, setIntakes] = useState<IntakeRequest[]>([]);
+  const [intakeSearch, setIntakeSearch] = useState('');
+  const [intakeDraft, setIntakeDraft] = useState<{ fullName: string; phone: string; email: string; residence: string }>(() => ({ fullName: '', phone: '', email: '', residence: '' }));
+  const [intakeSent, setIntakeSent] = useState(false);
+  const [intakeSending, setIntakeSending] = useState(false);
+  const [intakeBusyId, setIntakeBusyId] = useState<string | null>(null);
+  const [intakeEdit, setIntakeEdit] = useState<IntakeRequest | null>(null);
+
 
   // catalog
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
@@ -86,13 +99,23 @@ const App: React.FC = () => {
     delivered?: boolean;
     providerPaid?: boolean;
     providerDue?: number;
+    providerSentAt?: string;
     shipping: number; // charge
     shippingCost: number; // cost
     ivaRate: number;
     notes?: string;
     items: SaleLineItem[];
-  }>(() => ({ shipping: 0, shippingCost: 0, ivaRate: 0.16, invoiceRequired: false, delivered: false, providerPaid: false, providerDue: 0, items: [{ name: '', qty: 1, unitPrice: 0, unitCost: 0 }] }));
+  }>(() => ({ shipping: 0, shippingCost: 0, ivaRate: 0.16, invoiceRequired: false, delivered: false, providerPaid: false, providerDue: 0, providerSentAt: '', items: [{ name: '', qty: 1, unitPrice: 0, unitCost: 0 }] }));
   const [salePrintTarget, setSalePrintTarget] = useState<Sale | null>(null);
+
+  // payments UI
+  const [salePaymentsTarget, setSalePaymentsTarget] = useState<Sale | null>(null);
+  const [salePaymentEditId, setSalePaymentEditId] = useState<string | null>(null);
+  const [salePaymentDraft, setSalePaymentDraft] = useState<Partial<SalePayment>>({ method: 'cash', amount: 0, date: new Date().toISOString().slice(0, 10) });
+
+  // dashboard filters
+  const [cobranzaFrom, setCobranzaFrom] = useState<string>(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10));
+  const [cobranzaTo, setCobranzaTo] = useState<string>(() => new Date().toISOString().slice(0, 10));
 
   // appointments
   const [weekAnchor, setWeekAnchor] = useState<Date>(() => new Date());
@@ -109,9 +132,19 @@ const App: React.FC = () => {
   const [cpNew, setCpNew] = useState('');
   const [cpShowNew, setCpShowNew] = useState(false);
 
+  // Settings drafts (avoid "can't type" when saving on every keypress)
+  const [calendarUrlDraft, setCalendarUrlDraft] = useState('');
+  const [calendarSecretDraft, setCalendarSecretDraft] = useState('');
+  const [savingCalendar, setSavingCalendar] = useState(false);
+
   const printRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    if (isPublicRegister) {
+      setLoading(false);
+      return;
+    }
+
     let mounted = true;
     (async () => {
       try {
@@ -129,7 +162,7 @@ const App: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [isPublicRegister]);
 
   useEffect(() => {
     const unsub = dbService.watchSiceSettings(setSettings);
@@ -143,9 +176,15 @@ const App: React.FC = () => {
   const resolvedLogo = settings.logoDataUrl ? settings.logoDataUrl : defaultLogoUrl;
 
   useEffect(() => {
+    setCalendarUrlDraft(String(settings.calendarWebhookUrl || ''));
+    setCalendarSecretDraft(String(settings.calendarWebhookSecret || ''));
+  }, [settings.calendarWebhookUrl, settings.calendarWebhookSecret]);
+
+  useEffect(() => {
     if (!user) return;
     const unsubPatients = dbService.watchPatients(setPatients);
     const unsubCatalog = dbService.watchCatalogItems(setCatalog);
+    const unsubIntakes = dbService.watchIntakes(setIntakes);
 
     const year = new Date().getFullYear();
     let unsubSales: null | (() => void) = null;
@@ -159,6 +198,7 @@ const App: React.FC = () => {
     return () => {
       unsubPatients();
       unsubCatalog();
+      unsubIntakes();
       if (unsubSales) unsubSales();
       unsubAppts();
     };
@@ -170,6 +210,12 @@ const App: React.FC = () => {
     const unsub = dbService.watchAppointments(range, setAppointments);
     return () => unsub();
   }, [weekAnchor, user]);
+
+  useEffect(() => {
+    if (!salePaymentsTarget) return;
+    const fresh = sales.find((s) => s.id === salePaymentsTarget.id);
+    if (fresh) setSalePaymentsTarget(fresh);
+  }, [sales]);
 
   const filteredPatients = useMemo(() => {
     const s = patientSearch.trim().toLowerCase();
@@ -186,11 +232,58 @@ const App: React.FC = () => {
     return m;
   }, [patients]);
 
+  const SALE_MP_FEE_RATE = 0.0406;
+  const isCardPaymentMethod = (m: any) => m === 'debit_terminal' || m === 'credit_terminal';
+
+  const salePaidTotal = (s: Partial<Sale> | null | undefined): number => {
+    const payments = (s as any)?.payments;
+    if (!Array.isArray(payments)) return 0;
+    return payments.reduce((acc: number, p: any) => acc + Number(p?.amount || 0), 0);
+  };
+
+  const salePendingTotal = (s: Partial<Sale> | null | undefined): number => {
+    const total = Number((s as any)?.total || 0);
+    return Math.max(0, total - salePaidTotal(s));
+  };
+
+  const saleMpFeeTotal = (s: Partial<Sale> | null | undefined): number => {
+    const payments = (s as any)?.payments;
+    if (!Array.isArray(payments)) return 0;
+    return payments.reduce((acc: number, p: any) => acc + (isCardPaymentMethod(p?.method) ? Number(p?.amount || 0) * SALE_MP_FEE_RATE : 0), 0);
+  };
+
+  const patientDuplicates = useMemo(() => {
+    const normEmail = (v: any) => String(v || '').trim().toLowerCase();
+
+    const byEmail = new Map<string, Patient[]>();
+    for (const p of patients) {
+      const email = normEmail(p.email);
+      if (!email) continue;
+      const arr = byEmail.get(email) || [];
+      arr.push(p);
+      byEmail.set(email, arr);
+    }
+
+    return Array.from(byEmail.entries())
+      .filter(([, arr]) => arr.length > 1)
+      .map(([email, arr]) => ({ email, items: arr }));
+  }, [patients]);
+
   const catalogById = useMemo(() => {
     const m = new Map<string, CatalogItem>();
     for (const c of catalog) m.set(c.id, c);
     return m;
   }, [catalog]);
+
+  useEffect(() => {
+    const pid = String((patientDraft as any)?.id || '').trim();
+    if (!user || !pid) {
+      setPatientSales([]);
+      return;
+    }
+    const unsub = dbService.watchSalesByPatient(pid, setPatientSales);
+    return () => unsub();
+  }, [patientDraft, user]);
 
   const salePreview = useMemo(() => {
     const itemsSubtotal = (saleDraft.items || []).reduce((acc, it) => acc + Number(it.qty || 0) * Number(it.unitPrice || 0), 0);
@@ -210,7 +303,11 @@ const App: React.FC = () => {
       setError(null);
       setUiMessage(null);
       setLoading(true);
-      const profile = await loginWithMatricula(matricula, password);
+      const rawU = matricula.trim();
+      const mappedU = rawU.toLowerCase() === 'luisana'
+        ? 'dgnstcspprtdlnrst@gmail.com'
+        : rawU;
+      const profile = await loginWithMatricula(mappedU, password.trim());
       setUser(profile);
       setTab('patients');
       setPassword('');
@@ -308,6 +405,7 @@ const App: React.FC = () => {
         deliveryEstimatedAt,
         providerPaid: Boolean(saleDraft.providerPaid),
         providerDue: Number(saleDraft.providerDue || 0),
+        providerSentAt: saleDraft.providerSentAt ? String(saleDraft.providerSentAt) : '',
         items: saleDraft.items,
         shipping: Number(saleDraft.shipping || 0),
         shippingCost: Number(saleDraft.shippingCost || 0),
@@ -343,7 +441,7 @@ const App: React.FC = () => {
       }
 
       setUiMessage(`Venta registrada: ${id}`);
-      setSaleDraft({ shipping: 0, shippingCost: 0, ivaRate: 0.16, invoiceRequired: false, delivered: false, providerPaid: false, providerDue: 0, items: [{ name: '', qty: 1, unitPrice: 0, unitCost: 0 }] });
+      setSaleDraft({ shipping: 0, shippingCost: 0, ivaRate: 0.16, invoiceRequired: false, delivered: false, providerPaid: false, providerDue: 0, providerSentAt: '', items: [{ name: '', qty: 1, unitPrice: 0, unitCost: 0 }] });
     } catch (e: any) {
       setUiMessage(e?.message || 'No se pudo registrar venta.');
     }
@@ -404,6 +502,73 @@ const App: React.FC = () => {
     setTimeout(() => window.print(), 50);
   };
 
+  const openSalePayments = (sale: Sale) => {
+    setSalePaymentsTarget(sale);
+    setSalePaymentEditId(null);
+    setSalePaymentDraft({ method: 'cash', amount: 0, date: new Date().toISOString().slice(0, 10) });
+  };
+
+  const startEditSalePayment = (p: SalePayment) => {
+    setSalePaymentEditId(p.id);
+    setSalePaymentDraft({ ...p });
+  };
+
+  const saveSalePayment = async () => {
+    const sale = salePaymentsTarget;
+    if (!sale) return;
+
+    const method: SalePaymentMethod = (salePaymentDraft.method as any) || 'cash';
+    const amount = Number(salePaymentDraft.amount || 0);
+    const date = String(salePaymentDraft.date || '').slice(0, 10);
+    const notes = salePaymentDraft.notes ? String(salePaymentDraft.notes) : '';
+
+    if (!amount || amount <= 0) return setUiMessage('Monto debe ser mayor a 0.');
+    if (!date) return setUiMessage('Fecha es requerida.');
+
+    const existing = Array.isArray((sale as any).payments) ? ((sale as any).payments as SalePayment[]) : [];
+    const next: SalePayment = {
+      id: salePaymentEditId || (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : String(Date.now())),
+      method,
+      amount,
+      date,
+      notes,
+      createdAt: salePaymentEditId ? (salePaymentDraft.createdAt as any) : new Date().toISOString(),
+      createdBy: salePaymentEditId ? (salePaymentDraft.createdBy as any) : (user?.uid || '')
+    };
+
+    const payments = salePaymentEditId
+      ? existing.map((p) => (p.id === salePaymentEditId ? next : p))
+      : [...existing, next];
+
+    // sort by date asc for readability
+    payments.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+    await dbService.updateSale(sale.id, { payments } as any);
+
+    // reset draft
+    setSalePaymentEditId(null);
+    setSalePaymentDraft({ method: 'cash', amount: 0, date: new Date().toISOString().slice(0, 10) });
+    setUiMessage('Pago guardado.');
+    setTimeout(() => setUiMessage(null), 1500);
+  };
+
+  const deleteSalePayment = async (paymentId: string) => {
+    const sale = salePaymentsTarget;
+    if (!sale) return;
+    if (!confirm('¿Eliminar pago?')) return;
+
+    const existing = Array.isArray((sale as any).payments) ? ((sale as any).payments as SalePayment[]) : [];
+    const payments = existing.filter((p) => p.id !== paymentId);
+    await dbService.updateSale(sale.id, { payments } as any);
+
+    if (salePaymentEditId === paymentId) {
+      setSalePaymentEditId(null);
+      setSalePaymentDraft({ method: 'cash', amount: 0, date: new Date().toISOString().slice(0, 10) });
+    }
+    setUiMessage('Pago eliminado.');
+    setTimeout(() => setUiMessage(null), 1500);
+  };
+
   const updateThemeColor = async (color: string) => {
     try {
       await dbService.updateSiceSettings({ themeColor: color });
@@ -442,12 +607,84 @@ const App: React.FC = () => {
     }
   };
 
-  if (loading && !user) {
+  if (loading && !user && !isPublicRegister) {
     return (
       <div className="appShell">
         <div className="card" style={{ maxWidth: 420, margin: '64px auto' }}>
           <h2>SICE</h2>
           <p>Cargando…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isPublicRegister) {
+    return (
+      <div className="appShell">
+        <div className="card" style={{ maxWidth: 520, margin: '48px auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {resolvedLogo ? <img src={resolvedLogo} alt="Logo" style={{ height: 48, width: 48, objectFit: 'contain' }} /> : null}
+            <div>
+              <h2 style={{ margin: 0 }}>Diagnostic Support del Noroeste</h2>
+              <div className="muted">Registro de paciente</div>
+            </div>
+          </div>
+
+          <div style={{ height: 18 }} />
+
+          {intakeSent ? (
+            <div className="card" style={{ background: '#f0fdf4', borderColor: '#bbf7d0' }}>
+              <div style={{ fontWeight: 800 }}>Listo</div>
+              <div className="muted">Tu información fue enviada correctamente.</div>
+            </div>
+          ) : (
+            <>
+              <label className="label">Nombre completo</label>
+              <input className="input" value={intakeDraft.fullName} onChange={(e) => setIntakeDraft((s) => ({ ...s, fullName: e.target.value }))} />
+
+              <div style={{ height: 12 }} />
+              <label className="label">Número de celular</label>
+              <input className="input" value={intakeDraft.phone} onChange={(e) => setIntakeDraft((s) => ({ ...s, phone: e.target.value }))} />
+
+              <div style={{ height: 12 }} />
+              <label className="label">Correo electrónico</label>
+              <input className="input" value={intakeDraft.email} onChange={(e) => setIntakeDraft((s) => ({ ...s, email: e.target.value }))} />
+
+              <div style={{ height: 12 }} />
+              <label className="label">Lugar de residencia</label>
+              <input className="input" value={intakeDraft.residence} onChange={(e) => setIntakeDraft((s) => ({ ...s, residence: e.target.value }))} />
+
+              {uiMessage ? <div className="toast" style={{ position: 'static', marginTop: 12 }}>{uiMessage}</div> : null}
+
+              <div style={{ height: 14 }} />
+              <button
+                className="btnPrimary"
+                disabled={intakeSending}
+                onClick={async () => {
+                  const fullName = intakeDraft.fullName.trim();
+                  const phone = intakeDraft.phone.trim();
+                  const email = intakeDraft.email.trim();
+                  const residence = intakeDraft.residence.trim();
+                  if (!fullName || !phone || !email || !residence) {
+                    setUiMessage('Completa todos los campos.');
+                    return;
+                  }
+                  try {
+                    setIntakeSending(true);
+                    setUiMessage(null);
+                    await dbService.createIntake({ fullName, phone, email, residence });
+                    setIntakeSent(true);
+                  } catch (e: any) {
+                    setUiMessage(e?.message || 'No se pudo enviar.');
+                  } finally {
+                    setIntakeSending(false);
+                  }
+                }}
+              >
+                {intakeSending ? 'Enviando…' : 'Enviar'}
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
@@ -466,8 +703,8 @@ const App: React.FC = () => {
           </div>
 
           <div style={{ height: 16 }} />
-          <label className="label">Matrícula</label>
-          <input className="input" value={matricula} onChange={(e) => setMatricula(e.target.value)} placeholder="99032103" />
+          <label className="label">Usuario</label>
+          <input className="input" value={matricula} onChange={(e) => setMatricula(e.target.value)} placeholder="Nombre" />
 
           <div style={{ height: 12 }} />
           <label className="label">Contraseña</label>
@@ -478,13 +715,10 @@ const App: React.FC = () => {
 
           {error ? <div className="errorBox" style={{ marginTop: 12 }}>{error}</div> : null}
 
-          <div style={{ height: 16 }} />
+          <div style={{ height: 12 }} />
           <button className="btnPrimary" onClick={doLogin} disabled={!matricula.trim() || !password}>Entrar</button>
 
-          <div style={{ height: 10 }} />
-          <div className="muted" style={{ fontSize: 12 }}>
-            Tip: el color/branding se ajusta en <b>Settings</b> una vez dentro.
-          </div>
+
         </div>
       </div>
     );
@@ -555,12 +789,107 @@ const App: React.FC = () => {
         ) : null}
       </div>
 
+      {salePaymentsTarget ? (
+        <div className="modalOverlay" onClick={() => setSalePaymentsTarget(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+              <div>
+                <div style={{ fontWeight: 900, fontSize: 16 }}>Cobros</div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  {salePaymentsTarget.folio} {salePaymentsTarget.patientName ? `· ${salePaymentsTarget.patientName}` : ''}
+                </div>
+              </div>
+              <button className="btn" onClick={() => setSalePaymentsTarget(null)}>Cerrar</button>
+            </div>
+
+            <div style={{ height: 10 }} />
+            <div className="summaryBox">
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Total venta</span><b>{formatCurrency(Number(salePaymentsTarget.total || 0))}</b></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Pagado</span><b>{formatCurrency(salePaidTotal(salePaymentsTarget))}</b></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Pendiente</span><b>{formatCurrency(salePendingTotal(salePaymentsTarget))}</b></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Comisión MP (4.06% débito/crédito)</span><b>{formatCurrency(saleMpFeeTotal(salePaymentsTarget))}</b></div>
+            </div>
+
+            <div style={{ height: 12 }} />
+            <div style={{ fontWeight: 800, marginBottom: 6 }}>Pagos registrados</div>
+            <div className="list" style={{ maxHeight: 220, overflow: 'auto' }}>
+              {(Array.isArray((salePaymentsTarget as any).payments) ? ((salePaymentsTarget as any).payments as SalePayment[]) : [])
+                .slice()
+                .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+                .map((p) => (
+                  <div key={p.id} className="listRow" style={{ padding: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700 }}>
+                        {p.method === 'cash' ? 'Efectivo' : p.method === 'transfer' ? 'Transferencia' : p.method === 'debit_terminal' ? 'Terminal débito' : 'Terminal crédito'}
+                        {' · '}
+                        <span>{formatCurrency(Number(p.amount || 0))}</span>
+                      </div>
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        {String(p.date || '').slice(0, 10)}
+                        {isCardPaymentMethod(p.method) ? ` · MP: ${formatCurrency(Number(p.amount || 0) * SALE_MP_FEE_RATE)}` : ''}
+                        {p.notes ? ` · ${p.notes}` : ''}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button className="btn" onClick={() => startEditSalePayment(p)}>Editar</button>
+                      <button className="btnDanger" onClick={() => deleteSalePayment(p.id)}><Trash2 size={16} /></button>
+                    </div>
+                  </div>
+                ))}
+              {!Array.isArray((salePaymentsTarget as any).payments) || !(salePaymentsTarget as any).payments.length ? (
+                <div className="muted">Sin pagos registrados.</div>
+              ) : null}
+            </div>
+
+            <div style={{ height: 12 }} />
+            <hr />
+            <div style={{ fontWeight: 800, marginBottom: 6 }}>{salePaymentEditId ? 'Editar pago' : 'Agregar pago'}</div>
+
+            <div className="grid3">
+              <div>
+                <label className="label">Método</label>
+                <select className="input" value={String(salePaymentDraft.method || 'cash')} onChange={(e) => setSalePaymentDraft((s) => ({ ...s, method: e.target.value as any }))}>
+                  <option value="cash">Efectivo</option>
+                  <option value="transfer">Transferencia</option>
+                  <option value="debit_terminal">Terminal débito</option>
+                  <option value="credit_terminal">Terminal crédito</option>
+                </select>
+              </div>
+              <div>
+                <label className="label">Monto</label>
+                <input className="input" type="number" value={Number(salePaymentDraft.amount || 0)} onChange={(e) => setSalePaymentDraft((s) => ({ ...s, amount: Number(e.target.value) }))} />
+              </div>
+              <div>
+                <label className="label">Fecha</label>
+                <input className="input" type="date" value={String(salePaymentDraft.date || '').slice(0, 10)} onChange={(e) => setSalePaymentDraft((s) => ({ ...s, date: e.target.value }))} />
+              </div>
+            </div>
+
+            <div style={{ height: 10 }} />
+            <label className="label">Notas (opcional)</label>
+            <input className="input" value={salePaymentDraft.notes || ''} onChange={(e) => setSalePaymentDraft((s) => ({ ...s, notes: e.target.value }))} />
+
+            <div style={{ height: 12 }} />
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              {salePaymentEditId ? (
+                <button className="btn" onClick={() => {
+                  setSalePaymentEditId(null);
+                  setSalePaymentDraft({ method: 'cash', amount: 0, date: new Date().toISOString().slice(0, 10) });
+                }}>Cancelar</button>
+              ) : null}
+              <button className="btnPrimary" onClick={saveSalePayment}>{salePaymentEditId ? 'Guardar cambios' : 'Guardar pago'}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <header className="topbar">
         <div className="brand">
           {resolvedLogo ? <img src={resolvedLogo} alt="Logo" className="brandLogo" /> : <div className="brandLogoFallback" />}
           <div>
             <div className="brandTitle">Diagnostic Support del Noroeste</div>
-            <div className="brandSub">{user.nombre} · {user.unidad}</div>
+            {/* Subtítulo oculto por solicitud (evitar mostrar usuario/unidad en header) */}
+            <div className="brandSub" style={{ display: 'none' }}>{user.nombre} · {user.unidad}</div>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -570,15 +899,191 @@ const App: React.FC = () => {
       </header>
 
       <nav className="tabs">
+        <button className={tab === 'dashboard' ? 'tab active' : 'tab'} onClick={() => setTab('dashboard')}><LayoutDashboard size={16} />&nbsp;Tablero</button>
         <button className={tab === 'patients' ? 'tab active' : 'tab'} onClick={() => setTab('patients')}><Users size={16} />&nbsp;Pacientes</button>
         <button className={tab === 'sales' ? 'tab active' : 'tab'} onClick={() => setTab('sales')}><ShoppingCart size={16} />&nbsp;Ventas</button>
         <button className={tab === 'appointments' ? 'tab active' : 'tab'} onClick={() => setTab('appointments')}><CalendarDays size={16} />&nbsp;Agenda</button>
+        <button className={tab === 'intakes' ? 'tab active' : 'tab'} onClick={() => setTab('intakes')}><ClipboardList size={16} />&nbsp;Registros</button>
         <button className={tab === 'settings' ? 'tab active' : 'tab'} onClick={() => setTab('settings')}><SettingsIcon size={16} />&nbsp;Settings</button>
       </nav>
 
       {uiMessage ? <div className="toast">{uiMessage}</div> : null}
 
       <main className="content">
+        {tab === 'dashboard' ? (
+          <div className="grid2">
+            <div className="card">
+              <h3 style={{ marginTop: 0 }}>Pendiente proveedor</h3>
+              <div className="muted" style={{ marginTop: -6 }}>Ventas con pago a proveedor pendiente (para confirmar envío/pago).</div>
+              <div style={{ height: 10 }} />
+              {sales
+                .filter((s) => !s.providerPaid && Number(s.providerDue || 0) > 0)
+                .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+                .slice(0, 20)
+                .map((s) => (
+                  <div key={s.id} className="listRow" style={{ padding: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700 }}>{s.patientName || '(Sin nombre)'}</div>
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        {new Date(s.createdAt).toLocaleDateString('es-MX')} · Pendiente proveedor: <b>{formatCurrency(Number(s.providerDue || 0))}</b>
+                        {s.providerSentAt ? ` · Enviado: ${String(s.providerSentAt).slice(0, 10)}` : ''}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <button className="btn" onClick={async () => {
+                        const today = new Date().toISOString().slice(0, 10);
+                        await dbService.updateSale(s.id, { providerSentAt: today } as any);
+                      }}>Marcar enviado</button>
+                      <button className="btnPrimary" onClick={async () => {
+                        await dbService.updateSale(s.id, { providerPaid: true } as any);
+                      }}>Marcar pagado</button>
+                    </div>
+                  </div>
+                ))}
+              {!sales.some((s) => !s.providerPaid && Number(s.providerDue || 0) > 0) ? (
+                <div className="muted">Sin pendientes con proveedor.</div>
+              ) : null}
+              <div className="muted" style={{ marginTop: 10, fontSize: 12 }}>
+                Nota: este listado es el que usaremos para el recordatorio de los sábados.
+              </div>
+            </div>
+
+            <div className="card">
+              <h3 style={{ marginTop: 0 }}>Agenda (resumen)</h3>
+              <div className="muted">Próximas citas (semana actual):</div>
+              <div style={{ height: 10 }} />
+              {appointments
+                .slice()
+                .sort((a, b) => String(a.start).localeCompare(String(b.start)))
+                .slice(0, 10)
+                .map((a) => (
+                  <div key={a.id} className="listItem" style={{ alignItems: 'flex-start' }}>
+                    <div style={{ fontWeight: 700 }}>{new Date(a.start).toLocaleString('es-MX', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
+                    <div>{a.patientName ? `${a.patientName} · ` : ''}{a.title}</div>
+                  </div>
+                ))}
+              {!appointments.length ? <div className="muted">Sin citas en esta semana.</div> : null}
+            </div>
+
+            <div className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                <div>
+                  <h3 style={{ marginTop: 0, marginBottom: 0 }}>Cobranza</h3>
+                  <div className="muted" style={{ fontSize: 12 }}>Ventas con saldo pendiente (por periodo de venta).</div>
+                </div>
+              </div>
+
+              <div style={{ height: 10 }} />
+              <div className="grid3">
+                <div>
+                  <label className="label">Desde</label>
+                  <input className="input" type="date" value={cobranzaFrom} onChange={(e) => setCobranzaFrom(e.target.value)} />
+                </div>
+                <div>
+                  <label className="label">Hasta</label>
+                  <input className="input" type="date" value={cobranzaTo} onChange={(e) => setCobranzaTo(e.target.value)} />
+                </div>
+                <div>
+                  <label className="label">Resumen</label>
+                  {(() => {
+                    const from = cobranzaFrom ? `${cobranzaFrom}T00:00:00.000Z` : '';
+                    const to = cobranzaTo ? `${cobranzaTo}T23:59:59.999Z` : '';
+                    const filtered = (sales || []).filter((s) => {
+                      const t = String(s.createdAt || '');
+                      if (from && t < from) return false;
+                      if (to && t > to) return false;
+                      return salePendingTotal(s) > 0.009;
+                    });
+                    const pending = filtered.reduce((acc, s) => acc + salePendingTotal(s), 0);
+                    return (
+                      <div className="summaryBox">
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Ventas</span><b>{filtered.length}</b></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Pendiente</span><b>{formatCurrency(pending)}</b></div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              <div style={{ height: 10 }} />
+              <div className="list" style={{ maxHeight: 360, overflow: 'auto' }}>
+                {(() => {
+                  const from = cobranzaFrom ? `${cobranzaFrom}T00:00:00.000Z` : '';
+                  const to = cobranzaTo ? `${cobranzaTo}T23:59:59.999Z` : '';
+                  const filtered = (sales || [])
+                    .filter((s) => {
+                      const t = String(s.createdAt || '');
+                      if (from && t < from) return false;
+                      if (to && t > to) return false;
+                      return salePendingTotal(s) > 0.009;
+                    })
+                    .sort((a, b) => salePendingTotal(b) - salePendingTotal(a));
+
+                  return (
+                    <>
+                      {filtered.slice(0, 50).map((s) => (
+                        <div key={s.id} className="listRow" style={{ padding: 10 }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 800 }}>{s.patientName || '(Sin nombre)'} <span className="muted" style={{ fontWeight: 400 }}>· {s.folio}</span></div>
+                            <div className="muted" style={{ fontSize: 12 }}>
+                              {new Date(s.createdAt).toLocaleDateString('es-MX')} · Total {formatCurrency(Number(s.total || 0))} · Pagado {formatCurrency(salePaidTotal(s))} · Pendiente <b>{formatCurrency(salePendingTotal(s))}</b>
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <button className="btn" onClick={() => openSalePayments(s)}>Cobros</button>
+                          </div>
+                        </div>
+                      ))}
+                      {!filtered.length ? <div className="muted">Sin pendientes en el periodo.</div> : null}
+                      {filtered.length > 50 ? <div className="muted">Mostrando 50 de {filtered.length}.</div> : null}
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+
+            <div className="card">
+              <h3 style={{ marginTop: 0 }}>Proveedor mensual</h3>
+              <div className="muted" style={{ marginTop: -6, fontSize: 12 }}>Agrupado por mes de <code>providerSentAt</code> (enviado a proveedor).</div>
+              <div style={{ height: 10 }} />
+              {(() => {
+                const byMonth = new Map<string, { month: string; count: number; total: number; pendingCount: number; pendingTotal: number }>();
+                for (const s of (sales || [])) {
+                  const sentAt = String((s as any).providerSentAt || '').slice(0, 10);
+                  if (!sentAt) continue;
+                  const month = sentAt.slice(0, 7);
+                  const due = Number((s as any).providerDue || 0);
+                  const paid = Boolean((s as any).providerPaid);
+                  const row = byMonth.get(month) || { month, count: 0, total: 0, pendingCount: 0, pendingTotal: 0 };
+                  row.count += 1;
+                  row.total += due;
+                  if (!paid && due > 0) {
+                    row.pendingCount += 1;
+                    row.pendingTotal += due;
+                  }
+                  byMonth.set(month, row);
+                }
+                const rows = Array.from(byMonth.values()).sort((a, b) => String(b.month).localeCompare(String(a.month)));
+                return (
+                  <div className="list">
+                    {rows.map((r) => (
+                      <div key={r.month} className="listRow" style={{ padding: 10 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 800 }}>{r.month}</div>
+                          <div className="muted" style={{ fontSize: 12 }}>
+                            Ventas: {r.count} · Total proveedor: <b>{formatCurrency(r.total)}</b> · Pendiente: <b>{formatCurrency(r.pendingTotal)}</b> ({r.pendingCount})
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {!rows.length ? <div className="muted">Aún no hay registros con providerSentAt.</div> : null}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        ) : null}
+
         {tab === 'patients' ? (
           <div className="grid2">
             <div className="card">
@@ -589,6 +1094,37 @@ const App: React.FC = () => {
                   <input className="input" style={{ width: 220 }} value={patientSearch} onChange={(e) => setPatientSearch(e.target.value)} placeholder="Buscar" />
                 </div>
               </div>
+              {patientDuplicates.length ? (
+                <div className="card" style={{ background: '#fffbeb', borderColor: '#fde68a', marginBottom: 12 }}>
+                  <div style={{ fontWeight: 800 }}>Duplicados detectados (por correo)</div>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                    Solo se detectan duplicados por <b>correo</b> (el teléfono puede ser compartido en familia).
+                  </div>
+                  <div style={{ height: 10 }} />
+                  {patientDuplicates.slice(0, 10).map((g, idx) => (
+                    <div key={idx} className="listRow" style={{ padding: 8 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700 }}>{g.email}</div>
+                        <div className="muted" style={{ fontSize: 12 }}>{g.items.map((p) => `${p.name}${p.phone ? ` (${p.phone})` : ''}`).join(' · ')}</div>
+                      </div>
+                      <button className="btnDanger" onClick={async () => {
+                        // Keep the first item; delete the rest (after explicit preview)
+                        const items = g.items.slice();
+                        const keep = items[0];
+                        const del = items.slice(1);
+                        const msg = `Se conservará:\n- ${keep.name} (id: ${keep.id})\n\nSe eliminarán:\n${del.map((p) => `- ${p.name} (id: ${p.id})`).join('\n')}\n\n¿Confirmas eliminar?`;
+                        if (!confirm(msg)) return;
+                        for (const p of del) {
+                          await dbService.deletePatient(p.id);
+                        }
+                        setUiMessage('Duplicados eliminados.');
+                        setTimeout(() => setUiMessage(null), 2000);
+                      }}>Eliminar duplicados</button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
               <div style={{ height: 12 }} />
               <div className="list">
                 {filteredPatients.map((p) => (
@@ -618,6 +1154,66 @@ const App: React.FC = () => {
               <label className="label">Notas</label>
               <textarea className="input" style={{ minHeight: 80 }} value={patientDraft.notes || ''} onChange={(e) => setPatientDraft((s) => ({ ...s, notes: e.target.value }))} />
 
+              {patientDraft.id ? (
+                <>
+                  <div style={{ height: 14 }} />
+                  <div className="card" style={{ background: '#f8fafc' }}>
+                    <h4 style={{ marginTop: 0, marginBottom: 8 }}>Histórico</h4>
+
+                    {(() => {
+                      const plantillaSales = (patientSales || []).filter((s) => Boolean((s as any).followUpAt) || Boolean((s as any).deliveryEstimatedAt));
+                      const lastPlantilla = plantillaSales[0] || null;
+                      const followUpAt = lastPlantilla ? String((lastPlantilla as any).followUpAt || '') : '';
+                      const target = followUpAt ? new Date(followUpAt) : null;
+                      const daysLeft = target && Number.isFinite(target.getTime()) ? Math.ceil((target.getTime() - Date.now()) / (24 * 3600 * 1000)) : null;
+
+                      return (
+                        <>
+                          <div className="grid3">
+                            <div className="stat">
+                              <div className="muted">Última compra</div>
+                              <div style={{ fontWeight: 800 }}>
+                                {patientSales[0]?.createdAt ? new Date(String(patientSales[0].createdAt)).toLocaleDateString('es-MX') : '—'}
+                              </div>
+                            </div>
+                            <div className="stat">
+                              <div className="muted">Últimas plantillas</div>
+                              <div style={{ fontWeight: 800 }}>
+                                {lastPlantilla?.createdAt ? new Date(String(lastPlantilla.createdAt)).toLocaleDateString('es-MX') : '—'}
+                              </div>
+                            </div>
+                            <div className="stat">
+                              <div className="muted">Renovación</div>
+                              <div style={{ fontWeight: 800 }}>
+                                {target && Number.isFinite(target.getTime())
+                                  ? `${target.toLocaleDateString('es-MX')} (${daysLeft !== null ? (daysLeft >= 0 ? `${daysLeft} días` : `hace ${Math.abs(daysLeft)} días`) : ''})`
+                                  : '—'}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div style={{ height: 10 }} />
+                          <div className="muted" style={{ fontSize: 12 }}>Ventas anteriores:</div>
+                          <div style={{ height: 6 }} />
+                          <div className="list">
+                            {(patientSales || []).slice(0, 20).map((s) => (
+                              <div key={s.id} className="listRow" style={{ padding: 10 }}>
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontWeight: 700 }}>{s.folio || s.id}</div>
+                                  <div className="muted" style={{ fontSize: 12 }}>{new Date(String(s.createdAt)).toLocaleString('es-MX')} · Total: <b>{formatCurrency(Number((s as any).total || 0))}</b></div>
+                                </div>
+                                <button className="btn" onClick={() => setSalePrintTarget(s)}>Ver nota</button>
+                              </div>
+                            ))}
+                            {!patientSales.length ? <div className="muted">Sin ventas registradas.</div> : null}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </>
+              ) : null}
+
               <div style={{ height: 14 }} />
               <div style={{ display: 'flex', gap: 8 }}>
                 <button className="btnPrimary" onClick={savePatient}>Guardar</button>
@@ -646,9 +1242,16 @@ const App: React.FC = () => {
                       <div className="muted" style={{ fontSize: 12 }}>
                         {new Date(s.createdAt).toLocaleString('es-MX')} {s.patientName ? `· ${s.patientName}` : ''}
                       </div>
-                      <div style={{ fontSize: 12 }}>Total: <b>{formatCurrency(s.total)}</b> · Costo: {formatCurrency(s.costTotal)} · Utilidad: <b>{formatCurrency(s.profit)}</b></div>
+                      <div style={{ fontSize: 12 }}>
+                        Total: <b>{formatCurrency(s.total)}</b>
+                        {' · '}Pagado: <b>{formatCurrency(salePaidTotal(s))}</b>
+                        {' · '}Pendiente: <b>{formatCurrency(salePendingTotal(s))}</b>
+                        {' · '}MP: {formatCurrency(saleMpFeeTotal(s))}
+                      </div>
+                      <div style={{ fontSize: 12 }}>Costo: {formatCurrency(s.costTotal)} · Utilidad: <b>{formatCurrency(s.profit)}</b></div>
                     </div>
-                    <div style={{ display: 'flex', gap: 8 }}>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      <button className="btn" onClick={() => openSalePayments(s)}>Cobros</button>
                       <button className="btn" onClick={() => doPrintSale(s)}><Printer size={16} />&nbsp;Imprimir</button>
                       <button className="btnDanger" onClick={async () => {
                         if (!confirm('¿Eliminar venta?')) return;
@@ -776,6 +1379,7 @@ const App: React.FC = () => {
                 <div>
                   <label className="label">Pago a proveedor (pendiente)</label>
                   <input className="input" type="number" value={saleDraft.providerDue ?? 0} onChange={(e) => setSaleDraft((s) => ({ ...s, providerDue: Number(e.target.value) }))} />
+                  <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>Si es 0, no aparece como pendiente en Tablero.</div>
                 </div>
               </div>
 
@@ -861,6 +1465,125 @@ const App: React.FC = () => {
               </div>
             </div>
           </div>
+        ) : null}
+
+        {tab === 'intakes' ? (
+          <>
+          <div className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+              <h3 style={{ margin: 0 }}>Registros (formulario)</h3>
+              <div className="muted">Total: {intakes.length}</div>
+            </div>
+
+            <div className="muted" style={{ marginTop: 8 }}>
+              Enlace público para pacientes:
+              <div><code>{`${window.location.origin}${(import.meta as any).env?.BASE_URL || '/'}#/registro`}</code></div>
+            </div>
+
+            <div style={{ height: 12 }} />
+            <input className="input" value={intakeSearch} onChange={(e) => setIntakeSearch(e.target.value)} placeholder="Buscar por nombre / teléfono / correo" />
+
+            <div style={{ height: 12 }} />
+            <div className="list">
+              {intakes
+                .filter((r) => {
+                  const q = intakeSearch.trim().toLowerCase();
+                  if (!q) return true;
+                  const hay = `${r.fullName || ''} ${r.phone || ''} ${r.email || ''} ${r.residence || ''}`.toLowerCase();
+                  return hay.includes(q);
+                })
+                .map((r) => (
+                <div key={r.id} className="listRow" style={{ padding: 10, opacity: (r.status === 'approved' || r.status === 'rejected') ? 0.65 : 1 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 800, display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <span>{r.fullName}</span>
+                      {r.status === 'approved' ? <span className="pill">Aprobado</span> : null}
+                      {r.status === 'rejected' ? <span className="pill" style={{ background: '#fee2e2', borderColor: '#fecaca', color: '#991b1b' }}>Rechazado</span> : null}
+                      {!r.status || r.status === 'new' ? <span className="pill" style={{ background: '#e0f2fe', borderColor: '#bae6fd', color: '#075985' }}>Nuevo</span> : null}
+                    </div>
+                    <div className="muted" style={{ fontSize: 12 }}>{r.phone} · {r.email} · {r.residence}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <button className="btn" onClick={() => setIntakeEdit(r)}>Editar</button>
+                    <button className="btnDanger" onClick={async () => {
+                      if (!confirm('¿Eliminar registro?')) return;
+                      setIntakeBusyId(r.id);
+                      try {
+                        await dbService.deleteIntake(r.id);
+                      } finally {
+                        setIntakeBusyId(null);
+                      }
+                    }} disabled={intakeBusyId === r.id}>Eliminar</button>
+
+                    <button className="btnPrimary" disabled={intakeBusyId === r.id || r.status === 'approved'} onClick={async () => {
+                      setIntakeBusyId(r.id);
+                      try {
+                        await dbService.createOrUpdatePatientFromIntake({ fullName: r.fullName, phone: r.phone, email: r.email, residence: r.residence });
+                        await dbService.markIntakeApproved(r.id);
+                      } finally {
+                        setIntakeBusyId(null);
+                      }
+                    }}>{r.status === 'approved' ? 'Aprobado' : 'Aprobar'}</button>
+
+                    <button className="btnDanger" disabled={intakeBusyId === r.id || r.status === 'rejected'} onClick={async () => {
+                      if (!confirm('¿Rechazar registro?')) return;
+                      setIntakeBusyId(r.id);
+                      try {
+                        await dbService.markIntakeRejected(r.id);
+                      } finally {
+                        setIntakeBusyId(null);
+                      }
+                    }}>{r.status === 'rejected' ? 'Rechazado' : 'Rechazar'}</button>
+                  </div>
+                </div>
+              ))}
+              {!intakes.length ? <div className="muted">Sin registros.</div> : null}
+            </div>
+          </div>
+
+          {intakeEdit ? (
+            <div className="modalOverlay" onClick={() => setIntakeEdit(null)}>
+              <div className="modal" onClick={(e) => e.stopPropagation()}>
+                <h3 style={{ marginTop: 0 }}>Editar registro</h3>
+
+                <label className="label">Nombre completo</label>
+                <input className="input" value={intakeEdit.fullName || ''} onChange={(e) => setIntakeEdit((s) => s ? ({ ...s, fullName: e.target.value }) : s)} />
+
+                <div style={{ height: 10 }} />
+                <label className="label">Número de celular</label>
+                <input className="input" value={intakeEdit.phone || ''} onChange={(e) => setIntakeEdit((s) => s ? ({ ...s, phone: e.target.value }) : s)} />
+
+                <div style={{ height: 10 }} />
+                <label className="label">Correo electrónico</label>
+                <input className="input" value={intakeEdit.email || ''} onChange={(e) => setIntakeEdit((s) => s ? ({ ...s, email: e.target.value }) : s)} />
+
+                <div style={{ height: 10 }} />
+                <label className="label">Lugar de residencia</label>
+                <input className="input" value={intakeEdit.residence || ''} onChange={(e) => setIntakeEdit((s) => s ? ({ ...s, residence: e.target.value }) : s)} />
+
+                <div style={{ height: 14 }} />
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <button className="btn" onClick={() => setIntakeEdit(null)}>Cancelar</button>
+                  <button className="btnPrimary" onClick={async () => {
+                    if (!intakeEdit) return;
+                    setIntakeBusyId(intakeEdit.id);
+                    try {
+                      await dbService.updateIntake(intakeEdit.id, {
+                        fullName: intakeEdit.fullName,
+                        phone: intakeEdit.phone,
+                        email: intakeEdit.email,
+                        residence: intakeEdit.residence
+                      } as any);
+                      setIntakeEdit(null);
+                    } finally {
+                      setIntakeBusyId(null);
+                    }
+                  }} disabled={intakeBusyId === intakeEdit.id}>Guardar</button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          </>
         ) : null}
 
         {tab === 'appointments' ? (
@@ -976,8 +1699,8 @@ const App: React.FC = () => {
               <label className="label">Webhook URL</label>
               <input
                 className="input"
-                value={settings.calendarWebhookUrl || ''}
-                onChange={(e) => dbService.updateSiceSettings({ calendarWebhookUrl: e.target.value })}
+                value={calendarUrlDraft}
+                onChange={(e) => setCalendarUrlDraft(e.target.value)}
                 placeholder="https://script.google.com/macros/s/.../exec"
               />
 
@@ -985,10 +1708,33 @@ const App: React.FC = () => {
               <label className="label">Secret</label>
               <input
                 className="input"
-                value={settings.calendarWebhookSecret || ''}
-                onChange={(e) => dbService.updateSiceSettings({ calendarWebhookSecret: e.target.value })}
+                value={calendarSecretDraft}
+                onChange={(e) => setCalendarSecretDraft(e.target.value)}
                 placeholder="(igual al SICE_WEBHOOK_SECRET del script)"
               />
+
+              <div style={{ height: 10 }} />
+              <button
+                className="btnPrimary"
+                disabled={savingCalendar}
+                onClick={async () => {
+                  try {
+                    setSavingCalendar(true);
+                    await dbService.updateSiceSettings({
+                      calendarWebhookUrl: calendarUrlDraft.trim(),
+                      calendarWebhookSecret: calendarSecretDraft.trim()
+                    } as any);
+                    setUiMessage('Automatización guardada.');
+                    setTimeout(() => setUiMessage(null), 1500);
+                  } catch (e: any) {
+                    setUiMessage(e?.message || 'No se pudo guardar automatización.');
+                  } finally {
+                    setSavingCalendar(false);
+                  }
+                }}
+              >
+                {savingCalendar ? 'Guardando…' : 'Guardar'}
+              </button>
 
               <div style={{ height: 10 }} />
               <label style={{ display: 'flex', gap: 10, alignItems: 'center' }}>

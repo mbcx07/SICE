@@ -183,6 +183,18 @@ export interface SaleLineItem {
   unitCost: number;
 }
 
+export type SalePaymentMethod = 'cash' | 'transfer' | 'debit_terminal' | 'credit_terminal';
+
+export interface SalePayment {
+  id: string;
+  method: SalePaymentMethod;
+  amount: number;
+  date: string; // ISO date (yyyy-mm-dd) or full ISO
+  notes?: string;
+  createdAt?: string;
+  createdBy?: string;
+}
+
 export interface Sale {
   id: string;
   folio: string; // e.g. VTA-2026-000123
@@ -200,12 +212,17 @@ export interface Sale {
   deliveryActualAt?: string;    // ISO
   providerPaid?: boolean;
   providerDue?: number; // MXN
+  providerSentAt?: string; // ISO date when requested/sent to provider
 
   // follow-up (11 months after estimated delivery)
   followUpAt?: string; // ISO
   followUpCalendarEventId?: string;
 
   items: SaleLineItem[];
+
+  // payments (multi-payment)
+  payments?: SalePayment[];
+
   shipping: number; // charge to customer (pre-IVA)
   shippingCost?: number; // cost you pay (pre-IVA)
   ivaRate: number; // default 0.16
@@ -247,4 +264,15 @@ export interface SiceSettings {
 
   updatedAt?: string;
   updatedBy?: string;
+}
+
+export interface IntakeRequest {
+  id: string;
+  fullName: string;
+  phone: string;
+  email: string;
+  residence: string;
+  status?: 'new' | 'approved' | 'rejected';
+  createdAt?: any;
+  approvedAt?: any;
 }

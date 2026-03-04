@@ -1,8 +1,8 @@
 name: Deploy Vite site to GitHub Pages
 
 on:
-  push:
-    branches: ["main"]
+  # Disabled automatic deploy from main to avoid noisy failure emails.
+  # We publish via the gh-pages branch instead.
   workflow_dispatch:
 
 permissions:
