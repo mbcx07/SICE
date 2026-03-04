@@ -10,7 +10,7 @@ import {
   dbService
 } from './services/db';
 import type { Appointment, CatalogItem, Patient, Sale, SaleLineItem, SalePayment, SalePaymentMethod, SiceSettings, User, IntakeRequest } from './types';
-import { CalendarDays, LogOut, Settings as SettingsIcon, Users, ShoppingCart, Package, KeyRound, Printer, Trash2, PlusCircle, Search, LayoutDashboard, ClipboardList } from 'lucide-react';
+import { CalendarDays, LogOut, Settings as SettingsIcon, Users, ShoppingCart, Package, KeyRound, Printer, Trash2, PlusCircle, Search, LayoutDashboard, ClipboardList, Eye, EyeOff } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 
 type Tab = 'dashboard' | 'patients' | 'sales' | 'appointments' | 'intakes' | 'settings';
@@ -855,7 +855,9 @@ const App: React.FC = () => {
           <label className="label">Contraseña</label>
           <div style={{ display: 'flex', gap: 8 }}>
             <input className="input" style={{ flex: 1 }} type={showPassword ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••••" />
-            <button className="btn" onClick={() => setShowPassword((s) => !s)}>{showPassword ? 'Ocultar' : 'Ver'}</button>
+            <button className="btn" aria-label={showPassword ? 'Ocultar contraseña' : 'Ver contraseña'} title={showPassword ? 'Ocultar contraseña' : 'Ver contraseña'} onClick={() => setShowPassword((s) => !s)} style={{ width: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
           </div>
 
           {error ? <div className="errorBox" style={{ marginTop: 12 }}>{error}</div> : null}
@@ -2066,7 +2068,9 @@ const App: React.FC = () => {
             <label className="label">Nueva</label>
             <div style={{ display: 'flex', gap: 8 }}>
               <input className="input" style={{ flex: 1 }} type={cpShowNew ? 'text' : 'password'} value={cpNew} onChange={(e) => setCpNew(e.target.value)} />
-              <button className="btn" onClick={() => setCpShowNew((s) => !s)}>{cpShowNew ? 'Ocultar' : 'Ver'}</button>
+              <button className="btn" aria-label={cpShowNew ? 'Ocultar contraseña' : 'Ver contraseña'} title={cpShowNew ? 'Ocultar contraseña' : 'Ver contraseña'} onClick={() => setCpShowNew((s) => !s)} style={{ width: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {cpShowNew ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
             </div>
             <div style={{ height: 14 }} />
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
