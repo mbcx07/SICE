@@ -33,7 +33,7 @@ code{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Libera
 .brand{display:flex;align-items:center;gap:12px;}
 .brandLogo{height:44px;width:44px;object-fit:contain;border-radius:8px;border:1px solid #e5e7eb;background:#fff;padding:4px;}
 .brandLogoFallback{height:44px;width:44px;border-radius:10px;background:linear-gradient(135deg,var(--brand),#0f172a);}
-.brandTitle{font-weight:900;letter-spacing:0.04em;line-height:1.15;max-width:320px;}
+.brandTitle{font-weight:900;letter-spacing:0.06em;}
 .brandSub{font-size:12px;color:#64748b;}
 
 .tabs{
@@ -93,7 +93,7 @@ code{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Libera
 
 @media (max-width: 560px){
   .topbar{flex-wrap:wrap; align-items:flex-start; padding:12px 12px;}
-  .brandTitle{letter-spacing:0.02em; font-size:14px; max-width: 220px;}
+  .brandTitle{letter-spacing:0.02em; font-size:14px;}
   .brandLogo{height:40px;width:40px;}
   .tabs{
     display:grid;

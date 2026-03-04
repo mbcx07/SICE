@@ -1041,7 +1041,9 @@ const App: React.FC = () => {
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button className="btn" onClick={() => setShowChangePassword(true)} title="Cambiar contraseña"><KeyRound size={16} />&nbsp;Contraseña</button>
-          <button className="btn" onClick={doLogout}><LogOut size={16} />&nbsp;Salir</button>
+          <button className="btn" onClick={doLogout} aria-label="Salir" title="Salir" style={{ width: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <LogOut size={18} />
+          </button>
         </div>
       </header>
 
