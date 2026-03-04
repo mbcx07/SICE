@@ -9,7 +9,7 @@ import {
   AuthError,
   dbService
 } from './services/db';
-import type { Appointment, CatalogItem, Patient, Sale, SaleLineItem, SalePayment, SalePaymentMethod, SiceSettings, User, IntakeRequest } from './types';
+import type { Appointment, CatalogItem, ProviderShipment, Patient, Sale, SaleLineItem, SalePayment, SalePaymentMethod, SiceSettings, User, IntakeRequest } from './types';
 import { CalendarDays, LogOut, Settings as SettingsIcon, Users, ShoppingCart, Package, KeyRound, Printer, Trash2, PlusCircle, Search, LayoutDashboard, ClipboardList, Eye, EyeOff } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 
@@ -88,7 +88,17 @@ const App: React.FC = () => {
 
   // catalog
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
-  const [catalogDraft, setCatalogDraft] = useState<Partial<CatalogItem>>({ type: 'product', active: true });
+  const [catalogDraft, setCatalogDraft] = useState<Partial<CatalogItem>>({ type: 'product', active: true, isTemplate: false });
+
+  // provider shipments (provider transport cost)
+  const [providerShipments, setProviderShipments] = useState<ProviderShipment[]>([]);
+  const [providerShipmentDraft, setProviderShipmentDraft] = useState<Partial<ProviderShipment>>({
+    date: new Date().toISOString().slice(0, 10),
+    cost: 348,
+    notes: ''
+  });
+
+  const seededCatalogTemplatesRef = useRef(false);
 
   // sales
   const [sales, setSales] = useState<Sale[]>([]);
@@ -187,6 +197,7 @@ const App: React.FC = () => {
     if (!user) return;
     const unsubPatients = dbService.watchPatients(setPatients);
     const unsubCatalog = dbService.watchCatalogItems(setCatalog);
+    const unsubProviderShipments = dbService.watchProviderShipments(setProviderShipments);
     const unsubIntakes = dbService.watchIntakes(setIntakes);
 
     const year = new Date().getFullYear();
@@ -201,11 +212,49 @@ const App: React.FC = () => {
     return () => {
       unsubPatients();
       unsubCatalog();
+      unsubProviderShipments();
       unsubIntakes();
       if (unsubSales) unsubSales();
       unsubAppts();
     };
   }, [user]);
+
+  // Seed 3 default template items once (if catalog is empty)
+  useEffect(() => {
+    if (!user) return;
+    if (seededCatalogTemplatesRef.current) return;
+    if (catalog.length) {
+      seededCatalogTemplatesRef.current = true;
+      return;
+    }
+
+    seededCatalogTemplatesRef.current = true;
+
+    const svgDataUrl = (label: string) => {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="160"><defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#e2e8f0"/><stop offset="1" stop-color="#f8fafc"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#g)"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="Inter, Arial" font-size="26" fill="#0f172a">${label}</text></svg>`;
+      return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
+    };
+
+    void (async () => {
+      try {
+        // NOTE: replace prices/costs if you have the definitive numbers.
+        const seeds: Array<Partial<CatalogItem> & { name: string }> = [
+          { type: 'product', name: 'Plantilla Clásica', salePrice: 950, providerCost: 450, isTemplate: true, active: true, photoDataUrl: svgDataUrl('Clásica') },
+          { type: 'product', name: 'Plantilla Deportiva', salePrice: 1100, providerCost: 550, isTemplate: true, active: true, photoDataUrl: svgDataUrl('Deportiva') },
+          { type: 'product', name: 'Plantilla Diabetes', salePrice: 1300, providerCost: 650, isTemplate: true, active: true, photoDataUrl: svgDataUrl('Diabetes') }
+        ];
+        for (const s of seeds) {
+          await dbService.upsertCatalogItem({
+            ...s,
+            unitPrice: Number((s as any).salePrice || 0),
+            unitCost: Number((s as any).providerCost || 0)
+          } as any);
+        }
+      } catch {
+        // silent: seeding is best-effort
+      }
+    })();
+  }, [user, catalog.length]);
 
   useEffect(() => {
     if (!user) return;
@@ -320,8 +369,18 @@ const App: React.FC = () => {
       .filter((s) => !s.providerPaid && Number(s.providerDue || 0) > 0)
       .reduce((acc, s) => acc + Number(s.providerDue || 0), 0);
 
-    return { ventas, costo, iva, mp, gananciaNeta, proveedorPendienteMensual, proveedorPendienteAcumulado, proveedorMes: thisMonth };
-  }, [dashboardSales, sales]);
+    const proveedorEnviosMensual = (providerShipments || [])
+      .filter((x) => String(x.date || '').slice(0, 7) === thisMonth)
+      .reduce((acc, x) => acc + Number(x.cost || 0), 0);
+
+    const proveedorVentasMensualTotal = (sales || [])
+      .filter((s) => String((s as any).providerSentAt || '').slice(0, 7) === thisMonth)
+      .reduce((acc, s) => acc + Number((s as any).providerDue || 0), 0);
+
+    const proveedorTotalMensual = proveedorVentasMensualTotal + proveedorEnviosMensual;
+
+    return { ventas, costo, iva, mp, gananciaNeta, proveedorPendienteMensual, proveedorPendienteAcumulado, proveedorEnviosMensual, proveedorVentasMensualTotal, proveedorTotalMensual, proveedorMes: thisMonth };
+  }, [dashboardSales, sales, providerShipments]);
 
   const [dashboardChartMetric, setDashboardChartMetric] = useState<'ventas' | 'gananciaNeta'>('ventas');
   const [dashboardChartBucket, setDashboardChartBucket] = useState<'mes' | 'quincena' | 'dia'>('mes');
@@ -493,15 +552,22 @@ const App: React.FC = () => {
     const name = String(catalogDraft.name || '').trim();
     if (!name) return setUiMessage('Nombre del producto/servicio es requerido.');
     try {
+      const salePrice = Number((catalogDraft as any).salePrice ?? catalogDraft.unitPrice ?? 0);
+      const providerCost = Number((catalogDraft as any).providerCost ?? catalogDraft.unitCost ?? 0);
+
       await dbService.upsertCatalogItem({
         ...catalogDraft,
         name,
-        unitPrice: Number(catalogDraft.unitPrice || 0),
-        unitCost: Number(catalogDraft.unitCost || 0),
+        salePrice,
+        providerCost,
+        unitPrice: salePrice,
+        unitCost: providerCost,
+        photoDataUrl: (catalogDraft as any).photoDataUrl ? String((catalogDraft as any).photoDataUrl) : '',
+        isTemplate: Boolean((catalogDraft as any).isTemplate),
         active: catalogDraft.active !== false,
         type: catalogDraft.type === 'service' ? 'service' : 'product'
       } as any);
-      setCatalogDraft({ type: 'product', active: true });
+      setCatalogDraft({ type: 'product', active: true, isTemplate: false });
       setUiMessage('Guardado.');
       setTimeout(() => setUiMessage(null), 1500);
     } catch (e: any) {
@@ -1118,9 +1184,19 @@ const App: React.FC = () => {
               </div>
 
               <div style={{ height: 12 }} />
-              <div className="summaryBox" style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                <div><b>Proveedor pendiente ({dashboardKpis.proveedorMes})</b></div>
-                <div>{formatCurrency(dashboardKpis.proveedorPendienteMensual)}</div>
+              <div className="summaryBox">
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                  <div><b>Proveedor pendiente ({dashboardKpis.proveedorMes})</b></div>
+                  <div>{formatCurrency(dashboardKpis.proveedorPendienteMensual)}</div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 6 }}>
+                  <div><b>Envíos proveedor ({dashboardKpis.proveedorMes})</b></div>
+                  <div>{formatCurrency((dashboardKpis as any).proveedorEnviosMensual || 0)}</div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 6 }}>
+                  <div><b>Total proveedor ({dashboardKpis.proveedorMes})</b></div>
+                  <div>{formatCurrency((dashboardKpis as any).proveedorTotalMensual || 0)}</div>
+                </div>
               </div>
 
               <div style={{ height: 12 }} />
@@ -1344,15 +1420,16 @@ const App: React.FC = () => {
 
               <div style={{ height: 10 }} />
               {(() => {
-                const byMonth = new Map<string, { month: string; count: number; total: number; pendingCount: number; pendingTotal: number }>();
+                const byMonth = new Map<string, { month: string; count: number; salesTotal: number; shipmentCost: number; total: number; pendingCount: number; pendingTotal: number }>();
                 for (const s of (sales || [])) {
                   const sentAt = String((s as any).providerSentAt || '').slice(0, 10);
                   if (!sentAt) continue;
                   const month = sentAt.slice(0, 7);
                   const due = Number((s as any).providerDue || 0);
                   const paid = Boolean((s as any).providerPaid);
-                  const row = byMonth.get(month) || { month, count: 0, total: 0, pendingCount: 0, pendingTotal: 0 };
+                  const row = byMonth.get(month) || { month, count: 0, salesTotal: 0, shipmentCost: 0, total: 0, pendingCount: 0, pendingTotal: 0 };
                   row.count += 1;
+                  row.salesTotal += due;
                   row.total += due;
                   if (!paid && due > 0) {
                     row.pendingCount += 1;
@@ -1360,6 +1437,16 @@ const App: React.FC = () => {
                   }
                   byMonth.set(month, row);
                 }
+
+                for (const sh of (providerShipments || [])) {
+                  const month = String(sh.date || '').slice(0, 7);
+                  if (!month) continue;
+                  const row = byMonth.get(month) || { month, count: 0, salesTotal: 0, shipmentCost: 0, total: 0, pendingCount: 0, pendingTotal: 0 };
+                  row.shipmentCost += Number(sh.cost || 0);
+                  row.total += Number(sh.cost || 0);
+                  byMonth.set(month, row);
+                }
+
                 const rows = Array.from(byMonth.values()).sort((a, b) => String(b.month).localeCompare(String(a.month)));
                 return (
                   <div className="list">
@@ -1368,7 +1455,7 @@ const App: React.FC = () => {
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: 800 }}>{r.month}</div>
                           <div className="muted" style={{ fontSize: 12 }}>
-                            Ventas: {r.count} · Total proveedor: <b>{formatCurrency(r.total)}</b> · Pendiente: <b>{formatCurrency(r.pendingTotal)}</b> ({r.pendingCount})
+                            Ventas: {r.count} · Proveedor ventas: <b>{formatCurrency(r.salesTotal)}</b> · Envíos: <b>{formatCurrency(r.shipmentCost)}</b> · Total proveedor: <b>{formatCurrency(r.total)}</b> · Pendiente: <b>{formatCurrency(r.pendingTotal)}</b> ({r.pendingCount})
                           </div>
                         </div>
                       </div>
@@ -1377,6 +1464,69 @@ const App: React.FC = () => {
                   </div>
                 );
               })()}
+            </div>
+
+            <div className="card">
+              <h3 style={{ marginTop: 0 }}>Envíos proveedor</h3>
+              <div className="muted" style={{ marginTop: -6 }}>Gasto mensual de envío/paquetería hacia el proveedor.</div>
+
+              <div style={{ height: 10 }} />
+              <div className="grid3">
+                <div>
+                  <label className="label">Fecha</label>
+                  <input className="input" type="date" value={String(providerShipmentDraft.date || '')} onChange={(e) => setProviderShipmentDraft((s) => ({ ...s, date: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="label">Costo</label>
+                  <input className="input" type="number" value={Number(providerShipmentDraft.cost ?? 348)} onChange={(e) => setProviderShipmentDraft((s) => ({ ...s, cost: Number(e.target.value) }))} />
+                </div>
+                <div>
+                  <label className="label">Notas</label>
+                  <input className="input" value={String(providerShipmentDraft.notes || '')} onChange={(e) => setProviderShipmentDraft((s) => ({ ...s, notes: e.target.value }))} placeholder="Opcional" />
+                </div>
+              </div>
+
+              <div style={{ height: 10 }} />
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="btnPrimary" onClick={async () => {
+                  const date = String(providerShipmentDraft.date || '').slice(0, 10);
+                  if (!date) return;
+                  await dbService.upsertProviderShipment({
+                    id: providerShipmentDraft.id as any,
+                    date,
+                    cost: Number(providerShipmentDraft.cost ?? 348),
+                    notes: String(providerShipmentDraft.notes || '')
+                  } as any);
+                  setProviderShipmentDraft({ date: new Date().toISOString().slice(0, 10), cost: 348, notes: '' });
+                  setUiMessage('Envío guardado.');
+                  setTimeout(() => setUiMessage(null), 2000);
+                }}>{providerShipmentDraft.id ? 'Actualizar envío' : 'Agregar envío'}</button>
+                {providerShipmentDraft.id ? (
+                  <button className="btn" onClick={() => setProviderShipmentDraft({ date: new Date().toISOString().slice(0, 10), cost: 348, notes: '' })}>Cancelar</button>
+                ) : null}
+              </div>
+
+              <div style={{ height: 12 }} />
+              <div className="list" style={{ maxHeight: 320, overflow: 'auto' }}>
+                {providerShipments.slice().sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).slice(0, 40).map((sh) => (
+                  <div key={sh.id} className="listRow" style={{ padding: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 800 }}>{String(sh.date || '').slice(0, 10)} <span className="muted" style={{ fontWeight: 400 }}>· {formatCurrency(Number(sh.cost || 0))}</span></div>
+                      {sh.notes ? <div className="muted" style={{ fontSize: 12 }}>{sh.notes}</div> : null}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button className="btn" onClick={() => setProviderShipmentDraft(sh)}>Editar</button>
+                      <button className="btnDanger" onClick={async () => {
+                        if (!confirm('¿Eliminar este envío?')) return;
+                        await dbService.deleteProviderShipment(sh.id);
+                        setUiMessage('Envío eliminado.');
+                        setTimeout(() => setUiMessage(null), 2000);
+                      }}>Eliminar</button>
+                    </div>
+                  </div>
+                ))}
+                {!providerShipments.length ? <div className="muted">Sin envíos registrados.</div> : null}
+              </div>
             </div>
           </div>
           </div>
@@ -1588,8 +1738,8 @@ const App: React.FC = () => {
                           catalogItemId: id || undefined,
                           name: item?.name || '',
                           qty: Number(items[idx]?.qty || 1),
-                          unitPrice: Number(item?.unitPrice || 0),
-                          unitCost: Number(item?.unitCost || 0)
+                          unitPrice: Number((item as any)?.salePrice ?? item?.unitPrice ?? 0),
+                          unitCost: Number((item as any)?.providerCost ?? item?.unitCost ?? 0)
                         };
                         return { ...s, items };
                       });
@@ -1720,13 +1870,14 @@ const App: React.FC = () => {
                   <label className="label">Nombre</label>
                   <input className="input" value={catalogDraft.name || ''} onChange={(e) => setCatalogDraft((s) => ({ ...s, name: e.target.value }))} />
                 </div>
+
                 <div>
                   <label className="label">Precio (pre-IVA)</label>
-                  <input className="input" type="number" value={catalogDraft.unitPrice ?? 0} onChange={(e) => setCatalogDraft((s) => ({ ...s, unitPrice: Number(e.target.value) }))} />
+                  <input className="input" type="number" value={Number((catalogDraft as any).salePrice ?? catalogDraft.unitPrice ?? 0)} onChange={(e) => setCatalogDraft((s) => ({ ...s, salePrice: Number(e.target.value), unitPrice: Number(e.target.value) }))} />
                 </div>
                 <div>
-                  <label className="label">Costo</label>
-                  <input className="input" type="number" value={catalogDraft.unitCost ?? 0} onChange={(e) => setCatalogDraft((s) => ({ ...s, unitCost: Number(e.target.value) }))} />
+                  <label className="label">Costo proveedor</label>
+                  <input className="input" type="number" value={Number((catalogDraft as any).providerCost ?? catalogDraft.unitCost ?? 0)} onChange={(e) => setCatalogDraft((s) => ({ ...s, providerCost: Number(e.target.value), unitCost: Number(e.target.value) }))} />
                 </div>
                 <div>
                   <label className="label">Activo</label>
@@ -1734,6 +1885,34 @@ const App: React.FC = () => {
                     <option value="1">Sí</option>
                     <option value="0">No</option>
                   </select>
+                </div>
+
+                <div>
+                  <label className="label">Plantilla (template)</label>
+                  <select className="input" value={Boolean((catalogDraft as any).isTemplate) ? '1' : '0'} onChange={(e) => setCatalogDraft((s) => ({ ...s, isTemplate: e.target.value === '1' }))}>
+                    <option value="0">No</option>
+                    <option value="1">Sí</option>
+                  </select>
+                </div>
+
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label className="label">Foto (opcional)</label>
+                  <input className="input" type="file" accept="image/*" onChange={(e) => {
+                    const f = (e.target.files || [])[0];
+                    if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const dataUrl = String(reader.result || '');
+                      setCatalogDraft((s) => ({ ...s, photoDataUrl: dataUrl }));
+                    };
+                    reader.readAsDataURL(f);
+                  }} />
+                  {(catalogDraft as any).photoDataUrl ? (
+                    <div style={{ marginTop: 8, display: 'flex', gap: 10, alignItems: 'center' }}>
+                      <img src={String((catalogDraft as any).photoDataUrl)} alt="Foto" style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 10, border: '1px solid #e5e7eb' }} />
+                      <button className="btnDanger" onClick={() => setCatalogDraft((s) => ({ ...s, photoDataUrl: '' }))}>Quitar foto</button>
+                    </div>
+                  ) : null}
                 </div>
               </div>
               <div style={{ height: 10 }} />
@@ -1743,9 +1922,22 @@ const App: React.FC = () => {
               <div className="list">
                 {catalog.map((c) => (
                   <div key={c.id} className="listRow">
-                    <div>
-                      <div style={{ fontWeight: 600 }}>{c.name} {c.active === false ? <span className="pill">Inactivo</span> : null}</div>
-                      <div className="muted" style={{ fontSize: 12 }}>{c.type} · Precio: {formatCurrency(c.unitPrice)} · Costo: {formatCurrency(c.unitCost)}</div>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                      {(c as any).photoDataUrl ? (
+                        <img src={String((c as any).photoDataUrl)} alt="Foto" style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 10, border: '1px solid #e5e7eb' }} />
+                      ) : (
+                        <div style={{ width: 44, height: 44, borderRadius: 10, border: '1px solid #e5e7eb', background: '#f8fafc' }} />
+                      )}
+                      <div>
+                        <div style={{ fontWeight: 600 }}>
+                          {c.name}
+                          {Boolean((c as any).isTemplate) ? <span className="pill" style={{ marginLeft: 8 }}>Template</span> : null}
+                          {c.active === false ? <span className="pill" style={{ marginLeft: 8 }}>Inactivo</span> : null}
+                        </div>
+                        <div className="muted" style={{ fontSize: 12 }}>
+                          {c.type} · Precio: {formatCurrency(Number((c as any).salePrice ?? c.unitPrice ?? 0))} · Costo: {formatCurrency(Number((c as any).providerCost ?? c.unitCost ?? 0))}
+                        </div>
+                      </div>
                     </div>
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button className="btn" onClick={() => setCatalogDraft(c)}>Editar</button>
