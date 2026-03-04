@@ -482,10 +482,7 @@ const App: React.FC = () => {
           <div style={{ height: 12 }} />
           <button className="btnPrimary" onClick={doLogin} disabled={!matricula.trim() || !password}>Entrar</button>
 
-          <div style={{ height: 10 }} />
-          <div className="muted" style={{ fontSize: 12 }}>
-            Tip: el color/branding se ajusta en <b>Settings</b> una vez dentro.
-          </div>
+
         </div>
       </div>
     );
