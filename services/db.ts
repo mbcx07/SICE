@@ -245,7 +245,7 @@ export const TABS_BY_ROLE: Record<Role, AppTab[]> = {
 };
 
 export const VALIDATION_RULES = {
-  LOGIN_PASSWORD_MIN: 10,
+  LOGIN_PASSWORD_MIN: 4,
   NSS_REGEX: /^\d{10,11}$/,
   DIAGNOSTICO_MIN_CHARS: 10
 };
