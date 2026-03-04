@@ -9,7 +9,7 @@ import {
   AuthError,
   dbService
 } from './services/db';
-import type { Appointment, CatalogItem, Patient, Sale, SaleLineItem, SiceSettings, User, IntakeRequest } from './types';
+import type { Appointment, CatalogItem, Patient, Sale, SaleLineItem, SalePayment, SalePaymentMethod, SiceSettings, User, IntakeRequest } from './types';
 import { CalendarDays, LogOut, Settings as SettingsIcon, Users, ShoppingCart, Package, KeyRound, Printer, Trash2, PlusCircle, Search, LayoutDashboard, ClipboardList } from 'lucide-react';
 
 type Tab = 'dashboard' | 'patients' | 'sales' | 'appointments' | 'intakes' | 'settings';
@@ -108,6 +108,15 @@ const App: React.FC = () => {
   }>(() => ({ shipping: 0, shippingCost: 0, ivaRate: 0.16, invoiceRequired: false, delivered: false, providerPaid: false, providerDue: 0, providerSentAt: '', items: [{ name: '', qty: 1, unitPrice: 0, unitCost: 0 }] }));
   const [salePrintTarget, setSalePrintTarget] = useState<Sale | null>(null);
 
+  // payments UI
+  const [salePaymentsTarget, setSalePaymentsTarget] = useState<Sale | null>(null);
+  const [salePaymentEditId, setSalePaymentEditId] = useState<string | null>(null);
+  const [salePaymentDraft, setSalePaymentDraft] = useState<Partial<SalePayment>>({ method: 'cash', amount: 0, date: new Date().toISOString().slice(0, 10) });
+
+  // dashboard filters
+  const [cobranzaFrom, setCobranzaFrom] = useState<string>(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10));
+  const [cobranzaTo, setCobranzaTo] = useState<string>(() => new Date().toISOString().slice(0, 10));
+
   // appointments
   const [weekAnchor, setWeekAnchor] = useState<Date>(() => new Date());
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -202,6 +211,12 @@ const App: React.FC = () => {
     return () => unsub();
   }, [weekAnchor, user]);
 
+  useEffect(() => {
+    if (!salePaymentsTarget) return;
+    const fresh = sales.find((s) => s.id === salePaymentsTarget.id);
+    if (fresh) setSalePaymentsTarget(fresh);
+  }, [sales]);
+
   const filteredPatients = useMemo(() => {
     const s = patientSearch.trim().toLowerCase();
     if (!s) return patients;
@@ -216,6 +231,26 @@ const App: React.FC = () => {
     for (const p of patients) m.set(p.id, p);
     return m;
   }, [patients]);
+
+  const SALE_MP_FEE_RATE = 0.0406;
+  const isCardPaymentMethod = (m: any) => m === 'debit_terminal' || m === 'credit_terminal';
+
+  const salePaidTotal = (s: Partial<Sale> | null | undefined): number => {
+    const payments = (s as any)?.payments;
+    if (!Array.isArray(payments)) return 0;
+    return payments.reduce((acc: number, p: any) => acc + Number(p?.amount || 0), 0);
+  };
+
+  const salePendingTotal = (s: Partial<Sale> | null | undefined): number => {
+    const total = Number((s as any)?.total || 0);
+    return Math.max(0, total - salePaidTotal(s));
+  };
+
+  const saleMpFeeTotal = (s: Partial<Sale> | null | undefined): number => {
+    const payments = (s as any)?.payments;
+    if (!Array.isArray(payments)) return 0;
+    return payments.reduce((acc: number, p: any) => acc + (isCardPaymentMethod(p?.method) ? Number(p?.amount || 0) * SALE_MP_FEE_RATE : 0), 0);
+  };
 
   const patientDuplicates = useMemo(() => {
     const normEmail = (v: any) => String(v || '').trim().toLowerCase();
@@ -467,6 +502,73 @@ const App: React.FC = () => {
     setTimeout(() => window.print(), 50);
   };
 
+  const openSalePayments = (sale: Sale) => {
+    setSalePaymentsTarget(sale);
+    setSalePaymentEditId(null);
+    setSalePaymentDraft({ method: 'cash', amount: 0, date: new Date().toISOString().slice(0, 10) });
+  };
+
+  const startEditSalePayment = (p: SalePayment) => {
+    setSalePaymentEditId(p.id);
+    setSalePaymentDraft({ ...p });
+  };
+
+  const saveSalePayment = async () => {
+    const sale = salePaymentsTarget;
+    if (!sale) return;
+
+    const method: SalePaymentMethod = (salePaymentDraft.method as any) || 'cash';
+    const amount = Number(salePaymentDraft.amount || 0);
+    const date = String(salePaymentDraft.date || '').slice(0, 10);
+    const notes = salePaymentDraft.notes ? String(salePaymentDraft.notes) : '';
+
+    if (!amount || amount <= 0) return setUiMessage('Monto debe ser mayor a 0.');
+    if (!date) return setUiMessage('Fecha es requerida.');
+
+    const existing = Array.isArray((sale as any).payments) ? ((sale as any).payments as SalePayment[]) : [];
+    const next: SalePayment = {
+      id: salePaymentEditId || (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : String(Date.now())),
+      method,
+      amount,
+      date,
+      notes,
+      createdAt: salePaymentEditId ? (salePaymentDraft.createdAt as any) : new Date().toISOString(),
+      createdBy: salePaymentEditId ? (salePaymentDraft.createdBy as any) : (user?.uid || '')
+    };
+
+    const payments = salePaymentEditId
+      ? existing.map((p) => (p.id === salePaymentEditId ? next : p))
+      : [...existing, next];
+
+    // sort by date asc for readability
+    payments.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+    await dbService.updateSale(sale.id, { payments } as any);
+
+    // reset draft
+    setSalePaymentEditId(null);
+    setSalePaymentDraft({ method: 'cash', amount: 0, date: new Date().toISOString().slice(0, 10) });
+    setUiMessage('Pago guardado.');
+    setTimeout(() => setUiMessage(null), 1500);
+  };
+
+  const deleteSalePayment = async (paymentId: string) => {
+    const sale = salePaymentsTarget;
+    if (!sale) return;
+    if (!confirm('¿Eliminar pago?')) return;
+
+    const existing = Array.isArray((sale as any).payments) ? ((sale as any).payments as SalePayment[]) : [];
+    const payments = existing.filter((p) => p.id !== paymentId);
+    await dbService.updateSale(sale.id, { payments } as any);
+
+    if (salePaymentEditId === paymentId) {
+      setSalePaymentEditId(null);
+      setSalePaymentDraft({ method: 'cash', amount: 0, date: new Date().toISOString().slice(0, 10) });
+    }
+    setUiMessage('Pago eliminado.');
+    setTimeout(() => setUiMessage(null), 1500);
+  };
+
   const updateThemeColor = async (color: string) => {
     try {
       await dbService.updateSiceSettings({ themeColor: color });
@@ -687,6 +789,100 @@ const App: React.FC = () => {
         ) : null}
       </div>
 
+      {salePaymentsTarget ? (
+        <div className="modalOverlay" onClick={() => setSalePaymentsTarget(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+              <div>
+                <div style={{ fontWeight: 900, fontSize: 16 }}>Cobros</div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  {salePaymentsTarget.folio} {salePaymentsTarget.patientName ? `· ${salePaymentsTarget.patientName}` : ''}
+                </div>
+              </div>
+              <button className="btn" onClick={() => setSalePaymentsTarget(null)}>Cerrar</button>
+            </div>
+
+            <div style={{ height: 10 }} />
+            <div className="summaryBox">
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Total venta</span><b>{formatCurrency(Number(salePaymentsTarget.total || 0))}</b></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Pagado</span><b>{formatCurrency(salePaidTotal(salePaymentsTarget))}</b></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Pendiente</span><b>{formatCurrency(salePendingTotal(salePaymentsTarget))}</b></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Comisión MP (4.06% débito/crédito)</span><b>{formatCurrency(saleMpFeeTotal(salePaymentsTarget))}</b></div>
+            </div>
+
+            <div style={{ height: 12 }} />
+            <div style={{ fontWeight: 800, marginBottom: 6 }}>Pagos registrados</div>
+            <div className="list" style={{ maxHeight: 220, overflow: 'auto' }}>
+              {(Array.isArray((salePaymentsTarget as any).payments) ? ((salePaymentsTarget as any).payments as SalePayment[]) : [])
+                .slice()
+                .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+                .map((p) => (
+                  <div key={p.id} className="listRow" style={{ padding: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700 }}>
+                        {p.method === 'cash' ? 'Efectivo' : p.method === 'transfer' ? 'Transferencia' : p.method === 'debit_terminal' ? 'Terminal débito' : 'Terminal crédito'}
+                        {' · '}
+                        <span>{formatCurrency(Number(p.amount || 0))}</span>
+                      </div>
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        {String(p.date || '').slice(0, 10)}
+                        {isCardPaymentMethod(p.method) ? ` · MP: ${formatCurrency(Number(p.amount || 0) * SALE_MP_FEE_RATE)}` : ''}
+                        {p.notes ? ` · ${p.notes}` : ''}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button className="btn" onClick={() => startEditSalePayment(p)}>Editar</button>
+                      <button className="btnDanger" onClick={() => deleteSalePayment(p.id)}><Trash2 size={16} /></button>
+                    </div>
+                  </div>
+                ))}
+              {!Array.isArray((salePaymentsTarget as any).payments) || !(salePaymentsTarget as any).payments.length ? (
+                <div className="muted">Sin pagos registrados.</div>
+              ) : null}
+            </div>
+
+            <div style={{ height: 12 }} />
+            <hr />
+            <div style={{ fontWeight: 800, marginBottom: 6 }}>{salePaymentEditId ? 'Editar pago' : 'Agregar pago'}</div>
+
+            <div className="grid3">
+              <div>
+                <label className="label">Método</label>
+                <select className="input" value={String(salePaymentDraft.method || 'cash')} onChange={(e) => setSalePaymentDraft((s) => ({ ...s, method: e.target.value as any }))}>
+                  <option value="cash">Efectivo</option>
+                  <option value="transfer">Transferencia</option>
+                  <option value="debit_terminal">Terminal débito</option>
+                  <option value="credit_terminal">Terminal crédito</option>
+                </select>
+              </div>
+              <div>
+                <label className="label">Monto</label>
+                <input className="input" type="number" value={Number(salePaymentDraft.amount || 0)} onChange={(e) => setSalePaymentDraft((s) => ({ ...s, amount: Number(e.target.value) }))} />
+              </div>
+              <div>
+                <label className="label">Fecha</label>
+                <input className="input" type="date" value={String(salePaymentDraft.date || '').slice(0, 10)} onChange={(e) => setSalePaymentDraft((s) => ({ ...s, date: e.target.value }))} />
+              </div>
+            </div>
+
+            <div style={{ height: 10 }} />
+            <label className="label">Notas (opcional)</label>
+            <input className="input" value={salePaymentDraft.notes || ''} onChange={(e) => setSalePaymentDraft((s) => ({ ...s, notes: e.target.value }))} />
+
+            <div style={{ height: 12 }} />
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              {salePaymentEditId ? (
+                <button className="btn" onClick={() => {
+                  setSalePaymentEditId(null);
+                  setSalePaymentDraft({ method: 'cash', amount: 0, date: new Date().toISOString().slice(0, 10) });
+                }}>Cancelar</button>
+              ) : null}
+              <button className="btnPrimary" onClick={saveSalePayment}>{salePaymentEditId ? 'Guardar cambios' : 'Guardar pago'}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <header className="topbar">
         <div className="brand">
           {resolvedLogo ? <img src={resolvedLogo} alt="Logo" className="brandLogo" /> : <div className="brandLogoFallback" />}
@@ -767,6 +963,123 @@ const App: React.FC = () => {
                   </div>
                 ))}
               {!appointments.length ? <div className="muted">Sin citas en esta semana.</div> : null}
+            </div>
+
+            <div className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                <div>
+                  <h3 style={{ marginTop: 0, marginBottom: 0 }}>Cobranza</h3>
+                  <div className="muted" style={{ fontSize: 12 }}>Ventas con saldo pendiente (por periodo de venta).</div>
+                </div>
+              </div>
+
+              <div style={{ height: 10 }} />
+              <div className="grid3">
+                <div>
+                  <label className="label">Desde</label>
+                  <input className="input" type="date" value={cobranzaFrom} onChange={(e) => setCobranzaFrom(e.target.value)} />
+                </div>
+                <div>
+                  <label className="label">Hasta</label>
+                  <input className="input" type="date" value={cobranzaTo} onChange={(e) => setCobranzaTo(e.target.value)} />
+                </div>
+                <div>
+                  <label className="label">Resumen</label>
+                  {(() => {
+                    const from = cobranzaFrom ? `${cobranzaFrom}T00:00:00.000Z` : '';
+                    const to = cobranzaTo ? `${cobranzaTo}T23:59:59.999Z` : '';
+                    const filtered = (sales || []).filter((s) => {
+                      const t = String(s.createdAt || '');
+                      if (from && t < from) return false;
+                      if (to && t > to) return false;
+                      return salePendingTotal(s) > 0.009;
+                    });
+                    const pending = filtered.reduce((acc, s) => acc + salePendingTotal(s), 0);
+                    return (
+                      <div className="summaryBox">
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Ventas</span><b>{filtered.length}</b></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Pendiente</span><b>{formatCurrency(pending)}</b></div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              <div style={{ height: 10 }} />
+              <div className="list" style={{ maxHeight: 360, overflow: 'auto' }}>
+                {(() => {
+                  const from = cobranzaFrom ? `${cobranzaFrom}T00:00:00.000Z` : '';
+                  const to = cobranzaTo ? `${cobranzaTo}T23:59:59.999Z` : '';
+                  const filtered = (sales || [])
+                    .filter((s) => {
+                      const t = String(s.createdAt || '');
+                      if (from && t < from) return false;
+                      if (to && t > to) return false;
+                      return salePendingTotal(s) > 0.009;
+                    })
+                    .sort((a, b) => salePendingTotal(b) - salePendingTotal(a));
+
+                  return (
+                    <>
+                      {filtered.slice(0, 50).map((s) => (
+                        <div key={s.id} className="listRow" style={{ padding: 10 }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 800 }}>{s.patientName || '(Sin nombre)'} <span className="muted" style={{ fontWeight: 400 }}>· {s.folio}</span></div>
+                            <div className="muted" style={{ fontSize: 12 }}>
+                              {new Date(s.createdAt).toLocaleDateString('es-MX')} · Total {formatCurrency(Number(s.total || 0))} · Pagado {formatCurrency(salePaidTotal(s))} · Pendiente <b>{formatCurrency(salePendingTotal(s))}</b>
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <button className="btn" onClick={() => openSalePayments(s)}>Cobros</button>
+                          </div>
+                        </div>
+                      ))}
+                      {!filtered.length ? <div className="muted">Sin pendientes en el periodo.</div> : null}
+                      {filtered.length > 50 ? <div className="muted">Mostrando 50 de {filtered.length}.</div> : null}
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+
+            <div className="card">
+              <h3 style={{ marginTop: 0 }}>Proveedor mensual</h3>
+              <div className="muted" style={{ marginTop: -6, fontSize: 12 }}>Agrupado por mes de <code>providerSentAt</code> (enviado a proveedor).</div>
+              <div style={{ height: 10 }} />
+              {(() => {
+                const byMonth = new Map<string, { month: string; count: number; total: number; pendingCount: number; pendingTotal: number }>();
+                for (const s of (sales || [])) {
+                  const sentAt = String((s as any).providerSentAt || '').slice(0, 10);
+                  if (!sentAt) continue;
+                  const month = sentAt.slice(0, 7);
+                  const due = Number((s as any).providerDue || 0);
+                  const paid = Boolean((s as any).providerPaid);
+                  const row = byMonth.get(month) || { month, count: 0, total: 0, pendingCount: 0, pendingTotal: 0 };
+                  row.count += 1;
+                  row.total += due;
+                  if (!paid && due > 0) {
+                    row.pendingCount += 1;
+                    row.pendingTotal += due;
+                  }
+                  byMonth.set(month, row);
+                }
+                const rows = Array.from(byMonth.values()).sort((a, b) => String(b.month).localeCompare(String(a.month)));
+                return (
+                  <div className="list">
+                    {rows.map((r) => (
+                      <div key={r.month} className="listRow" style={{ padding: 10 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 800 }}>{r.month}</div>
+                          <div className="muted" style={{ fontSize: 12 }}>
+                            Ventas: {r.count} · Total proveedor: <b>{formatCurrency(r.total)}</b> · Pendiente: <b>{formatCurrency(r.pendingTotal)}</b> ({r.pendingCount})
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {!rows.length ? <div className="muted">Aún no hay registros con providerSentAt.</div> : null}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         ) : null}
@@ -929,9 +1242,16 @@ const App: React.FC = () => {
                       <div className="muted" style={{ fontSize: 12 }}>
                         {new Date(s.createdAt).toLocaleString('es-MX')} {s.patientName ? `· ${s.patientName}` : ''}
                       </div>
-                      <div style={{ fontSize: 12 }}>Total: <b>{formatCurrency(s.total)}</b> · Costo: {formatCurrency(s.costTotal)} · Utilidad: <b>{formatCurrency(s.profit)}</b></div>
+                      <div style={{ fontSize: 12 }}>
+                        Total: <b>{formatCurrency(s.total)}</b>
+                        {' · '}Pagado: <b>{formatCurrency(salePaidTotal(s))}</b>
+                        {' · '}Pendiente: <b>{formatCurrency(salePendingTotal(s))}</b>
+                        {' · '}MP: {formatCurrency(saleMpFeeTotal(s))}
+                      </div>
+                      <div style={{ fontSize: 12 }}>Costo: {formatCurrency(s.costTotal)} · Utilidad: <b>{formatCurrency(s.profit)}</b></div>
                     </div>
-                    <div style={{ display: 'flex', gap: 8 }}>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      <button className="btn" onClick={() => openSalePayments(s)}>Cobros</button>
                       <button className="btn" onClick={() => doPrintSale(s)}><Printer size={16} />&nbsp;Imprimir</button>
                       <button className="btnDanger" onClick={async () => {
                         if (!confirm('¿Eliminar venta?')) return;

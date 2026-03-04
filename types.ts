@@ -183,6 +183,18 @@ export interface SaleLineItem {
   unitCost: number;
 }
 
+export type SalePaymentMethod = 'cash' | 'transfer' | 'debit_terminal' | 'credit_terminal';
+
+export interface SalePayment {
+  id: string;
+  method: SalePaymentMethod;
+  amount: number;
+  date: string; // ISO date (yyyy-mm-dd) or full ISO
+  notes?: string;
+  createdAt?: string;
+  createdBy?: string;
+}
+
 export interface Sale {
   id: string;
   folio: string; // e.g. VTA-2026-000123
@@ -207,6 +219,10 @@ export interface Sale {
   followUpCalendarEventId?: string;
 
   items: SaleLineItem[];
+
+  // payments (multi-payment)
+  payments?: SalePayment[];
+
   shipping: number; // charge to customer (pre-IVA)
   shippingCost?: number; // cost you pay (pre-IVA)
   ivaRate: number; // default 0.16

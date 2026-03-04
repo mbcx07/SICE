@@ -1357,6 +1357,7 @@ export const dbService = {
         providerSentAt: (input as any).providerSentAt ? String((input as any).providerSentAt) : '',
 
         items: cleanItems,
+        payments: [],
         shipping,
         shippingCost,
         ivaRate,
