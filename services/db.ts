@@ -234,6 +234,30 @@ const bootstrapPrimaryAdminProfile = async (uid: string, matricula: string, emai
   await setDoc(doc(db, 'usuarios', uid), bootstrapUser, { merge: true });
 };
 
+const bootstrapSiceUserProfile = async (uid: string, matriculaLike: string, email: string) => {
+  const normalized = normalizeMatricula(matriculaLike || '');
+  // SICE: allow a small set of simple usernames to bootstrap into usuarios/{uid}
+  const allowed = new Set(['LUISANA', 'DGNS', 'DIAGNOSTIC', 'ADMIN']);
+  const isAllowed = allowed.has(normalized) || email.toLowerCase() === 'dgnstcspprtdlnrst@gmail.com';
+  if (!isAllowed) return;
+
+  const display = normalized === 'LUISANA' ? 'Luisana' : (email.split('@')[0] || normalized);
+
+  const bootstrapUser: any = {
+    id: uid,
+    nombre: display,
+    matricula: normalized || 'USER',
+    role: Role.ADMIN_SISTEMA,
+    unidad: 'CENTRAL',
+    ooad: 'BCS',
+    activo: true,
+    authEmail: email,
+    createdAt: nowIso()
+  };
+
+  await setDoc(doc(db, 'usuarios', uid), bootstrapUser, { merge: true });
+};
+
 export type AppTab = 'dashboard' | 'tramites' | 'nuevo' | 'central' | 'adminUsers';
 
 export const TABS_BY_ROLE: Record<Role, AppTab[]> = {
@@ -390,7 +414,13 @@ export const ensureSession = async (): Promise<User | null> => {
     const firebaseUser = await waitForAuthState();
     if (!firebaseUser) return null;
 
-    const userDoc = await getDoc(doc(db, 'usuarios', firebaseUser.uid));
+    let userDoc = await getDoc(doc(db, 'usuarios', firebaseUser.uid));
+    if (!userDoc.exists()) {
+      // SICE bootstrap: if the authenticated user is allowed, create profile automatically.
+      const email = String(firebaseUser.email || '');
+      await bootstrapSiceUserProfile(firebaseUser.uid, email.split('@')[0] || 'USER', email);
+      userDoc = await getDoc(doc(db, 'usuarios', firebaseUser.uid));
+    }
     if (!userDoc.exists()) {
       await signOut(auth);
       clearSession();
@@ -445,12 +475,15 @@ export const loginWithMatricula = async (matricula: string, password: string): P
           if (matriculaNormalized === PRIMARY_ADMIN_MATRICULA) {
             await bootstrapPrimaryAdminProfile(cred.user.uid, matriculaNormalized, email);
             userDoc = await getDoc(doc(db, 'usuarios', cred.user.uid));
+          } else {
+            await bootstrapSiceUserProfile(cred.user.uid, matriculaNormalized, email);
+            userDoc = await getDoc(doc(db, 'usuarios', cred.user.uid));
           }
         }
 
         if (!userDoc.exists()) {
           await signOut(auth);
-          throw new AuthError('INVALID_SESSION', 'Tu cuenta no esta mapeada en usuarios/{uid}.');
+          throw new AuthError('INVALID_SESSION', 'Tu cuenta no está habilitada en el sistema.');
         }
 
         const user = { id: cred.user.uid, ...(userDoc.data() as Omit<User, 'id'>) } as User;
