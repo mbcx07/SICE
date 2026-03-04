@@ -468,7 +468,7 @@ const App: React.FC = () => {
 
           <div style={{ height: 16 }} />
           <label className="label">Usuario</label>
-          <input className="input" value={matricula} onChange={(e) => setMatricula(e.target.value)} placeholder="Luisana" />
+          <input className="input" value={matricula} onChange={(e) => setMatricula(e.target.value)} placeholder="Nombre" />
 
           <div style={{ height: 12 }} />
           <label className="label">Contraseña</label>
@@ -478,14 +478,6 @@ const App: React.FC = () => {
           </div>
 
           {error ? <div className="errorBox" style={{ marginTop: 12 }}>{error}</div> : null}
-
-          <div style={{ height: 12 }} />
-          <div className="muted" style={{ fontSize: 12 }}>
-            Usuario: <b>Luisana</b>
-          </div>
-          <div className="muted" style={{ fontSize: 12 }}>
-            Contraseña: <b>170317</b>
-          </div>
 
           <div style={{ height: 12 }} />
           <button className="btnPrimary" onClick={doLogin} disabled={!matricula.trim() || !password}>Entrar</button>
