@@ -11,6 +11,7 @@ import {
 } from './services/db';
 import type { Appointment, CatalogItem, Patient, Sale, SaleLineItem, SalePayment, SalePaymentMethod, SiceSettings, User, IntakeRequest } from './types';
 import { CalendarDays, LogOut, Settings as SettingsIcon, Users, ShoppingCart, Package, KeyRound, Printer, Trash2, PlusCircle, Search, LayoutDashboard, ClipboardList } from 'lucide-react';
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 
 type Tab = 'dashboard' | 'patients' | 'sales' | 'appointments' | 'intakes' | 'settings';
 
@@ -114,6 +115,8 @@ const App: React.FC = () => {
   const [salePaymentDraft, setSalePaymentDraft] = useState<Partial<SalePayment>>({ method: 'cash', amount: 0, date: new Date().toISOString().slice(0, 10) });
 
   // dashboard filters
+  type DashboardRangePreset = 'quincena' | 'mes' | 'anio' | 'rango';
+  const [dashboardPreset, setDashboardPreset] = useState<DashboardRangePreset>('mes');
   const [cobranzaFrom, setCobranzaFrom] = useState<string>(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10));
   const [cobranzaTo, setCobranzaTo] = useState<string>(() => new Date().toISOString().slice(0, 10));
 
@@ -251,6 +254,125 @@ const App: React.FC = () => {
     if (!Array.isArray(payments)) return 0;
     return payments.reduce((acc: number, p: any) => acc + (isCardPaymentMethod(p?.method) ? Number(p?.amount || 0) * SALE_MP_FEE_RATE : 0), 0);
   };
+
+  const applyDashboardPreset = (preset: 'quincena' | 'mes' | 'anio') => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+    if (preset === 'anio') {
+      setCobranzaFrom(fmt(new Date(y, 0, 1)));
+      setCobranzaTo(fmt(new Date(y, 11, 31)));
+      return;
+    }
+
+    if (preset === 'mes') {
+      const lastDay = new Date(y, m + 1, 0).getDate();
+      setCobranzaFrom(fmt(new Date(y, m, 1)));
+      setCobranzaTo(fmt(new Date(y, m, lastDay)));
+      return;
+    }
+
+    // quincena actual (1-15 o 16-fin)
+    const day = now.getDate();
+    const lastDay = new Date(y, m + 1, 0).getDate();
+    if (day <= 15) {
+      setCobranzaFrom(fmt(new Date(y, m, 1)));
+      setCobranzaTo(fmt(new Date(y, m, 15)));
+    } else {
+      setCobranzaFrom(fmt(new Date(y, m, 16)));
+      setCobranzaTo(fmt(new Date(y, m, lastDay)));
+    }
+  };
+
+  const dashboardRange = useMemo(() => {
+    const from = cobranzaFrom ? `${cobranzaFrom}T00:00:00.000Z` : '';
+    const to = cobranzaTo ? `${cobranzaTo}T23:59:59.999Z` : '';
+    return { from, to };
+  }, [cobranzaFrom, cobranzaTo]);
+
+  const dashboardSales = useMemo(() => {
+    const { from, to } = dashboardRange;
+    return (sales || []).filter((s) => {
+      const t = String(s.createdAt || '');
+      if (from && t < from) return false;
+      if (to && t > to) return false;
+      return true;
+    });
+  }, [sales, dashboardRange]);
+
+  const dashboardKpis = useMemo(() => {
+    const ventas = dashboardSales.reduce((acc, s) => acc + Number(s.total || 0), 0);
+    const costo = dashboardSales.reduce((acc, s) => acc + Number(s.costTotal || 0), 0);
+    const iva = dashboardSales.reduce((acc, s) => acc + Number(s.iva || 0), 0);
+    const mp = dashboardSales.reduce((acc, s) => acc + saleMpFeeTotal(s), 0);
+    const gananciaNeta = dashboardSales.reduce((acc, s) => acc + (Number(s.total || 0) - Number(s.costTotal || 0) - saleMpFeeTotal(s)), 0);
+
+    const now = new Date();
+    const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const proveedorPendienteMensual = (sales || [])
+      .filter((s) => !s.providerPaid && Number(s.providerDue || 0) > 0 && String((s as any).providerSentAt || '').slice(0, 7) === thisMonth)
+      .reduce((acc, s) => acc + Number(s.providerDue || 0), 0);
+
+    return { ventas, costo, iva, mp, gananciaNeta, proveedorPendienteMensual, proveedorMes: thisMonth };
+  }, [dashboardSales, sales]);
+
+  const dashboardMonthlySales = useMemo(() => {
+    const now = new Date();
+    const months: { key: string; label: string; total: number }[] = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = d.toLocaleDateString('es-MX', { month: 'short' });
+      months.push({ key, label: `${label} ${String(d.getFullYear()).slice(-2)}`, total: 0 });
+    }
+    const idx = new Map(months.map((m) => [m.key, m] as const));
+    for (const s of (sales || [])) {
+      const k = String(s.createdAt || '').slice(0, 7);
+      const row = idx.get(k);
+      if (!row) continue;
+      row.total += Number(s.total || 0);
+    }
+    return months;
+  }, [sales]);
+
+  const pendingByPatient = useMemo(() => {
+    const by = new Map<string, { patientId?: string; patientName: string; pending: number; salesCount: number }>();
+    for (const s of (sales || [])) {
+      const pending = salePendingTotal(s);
+      if (pending <= 0.009) continue;
+      const key = String(s.patientId || s.patientName || '');
+      const row = by.get(key) || { patientId: s.patientId, patientName: s.patientName || '(Sin nombre)', pending: 0, salesCount: 0 };
+      row.pending += pending;
+      row.salesCount += 1;
+      by.set(key, row);
+    }
+    return Array.from(by.values()).sort((a, b) => b.pending - a.pending);
+  }, [sales]);
+
+  const renewalsNextMonth = useMemo(() => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59, 999);
+    return (sales || [])
+      .filter((s) => {
+        const fu = String((s as any).followUpAt || '');
+        if (!fu) return false;
+        const d = new Date(fu);
+        if (!Number.isFinite(d.getTime())) return false;
+        return d >= start && d <= end;
+      })
+      .sort((a, b) => String((a as any).followUpAt || '').localeCompare(String((b as any).followUpAt || '')));
+  }, [sales]);
+
+  const deliveredPlantillas = useMemo(() => {
+    return (sales || [])
+      .filter((s) => Boolean((s as any).delivered) || Boolean((s as any).deliveryActualAt))
+      .slice()
+      .sort((a, b) => String((b as any).deliveryActualAt || b.createdAt || '').localeCompare(String((a as any).deliveryActualAt || a.createdAt || '')));
+  }, [sales]);
 
   const patientDuplicates = useMemo(() => {
     const normEmail = (v: any) => String(v || '').trim().toLowerCase();
@@ -911,7 +1033,83 @@ const App: React.FC = () => {
 
       <main className="content">
         {tab === 'dashboard' ? (
-          <div className="grid2">
+          <div className="dashboardStack">
+            <div className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+                <div>
+                  <h3 style={{ marginTop: 0, marginBottom: 0 }}>Tablero</h3>
+                  <div className="muted" style={{ fontSize: 12 }}>Filtros por fecha (ventas) + KPIs + evolución mensual.</div>
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button className="btn" style={dashboardPreset === 'quincena' ? { borderColor: 'var(--brand)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--brand) 20%, transparent)' } : undefined} onClick={() => { setDashboardPreset('quincena'); applyDashboardPreset('quincena'); }}>Quincena</button>
+                  <button className="btn" style={dashboardPreset === 'mes' ? { borderColor: 'var(--brand)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--brand) 20%, transparent)' } : undefined} onClick={() => { setDashboardPreset('mes'); applyDashboardPreset('mes'); }}>Mes</button>
+                  <button className="btn" style={dashboardPreset === 'anio' ? { borderColor: 'var(--brand)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--brand) 20%, transparent)' } : undefined} onClick={() => { setDashboardPreset('anio'); applyDashboardPreset('anio'); }}>Año</button>
+                  <button className="btn" style={dashboardPreset === 'rango' ? { borderColor: 'var(--brand)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--brand) 20%, transparent)' } : undefined} onClick={() => setDashboardPreset('rango')}>Rango</button>
+                </div>
+              </div>
+
+              <div style={{ height: 12 }} />
+              <div className="grid3">
+                <div>
+                  <label className="label">Desde</label>
+                  <input className="input" type="date" value={cobranzaFrom} onChange={(e) => { setDashboardPreset('rango'); setCobranzaFrom(e.target.value); }} />
+                </div>
+                <div>
+                  <label className="label">Hasta</label>
+                  <input className="input" type="date" value={cobranzaTo} onChange={(e) => { setDashboardPreset('rango'); setCobranzaTo(e.target.value); }} />
+                </div>
+                <div>
+                  <label className="label">Resumen</label>
+                  <div className="summaryBox">
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Ventas</span><b>{dashboardSales.length}</b></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Cobranza pendiente</span><b>{formatCurrency(dashboardSales.reduce((acc, s) => acc + salePendingTotal(s), 0))}</b></div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ height: 12 }} />
+              <div className="grid4">
+                <div className="statCard">
+                  <div className="muted" style={{ fontSize: 12 }}>Ventas total</div>
+                  <div style={{ fontWeight: 900, fontSize: 18 }}>{formatCurrency(dashboardKpis.ventas)}</div>
+                </div>
+                <div className="statCard">
+                  <div className="muted" style={{ fontSize: 12 }}>Costo proveedor/insumo</div>
+                  <div style={{ fontWeight: 900, fontSize: 18 }}>{formatCurrency(dashboardKpis.costo)}</div>
+                </div>
+                <div className="statCard">
+                  <div className="muted" style={{ fontSize: 12 }}>IVA</div>
+                  <div style={{ fontWeight: 900, fontSize: 18 }}>{formatCurrency(dashboardKpis.iva)}</div>
+                </div>
+                <div className="statCard">
+                  <div className="muted" style={{ fontSize: 12 }}>Ganancia neta (– MP)</div>
+                  <div style={{ fontWeight: 900, fontSize: 18 }}>{formatCurrency(dashboardKpis.gananciaNeta)}</div>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>MP estimado: {formatCurrency(dashboardKpis.mp)}</div>
+                </div>
+              </div>
+
+              <div style={{ height: 12 }} />
+              <div className="summaryBox" style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                <div><b>Proveedor pendiente ({dashboardKpis.proveedorMes})</b></div>
+                <div>{formatCurrency(dashboardKpis.proveedorPendienteMensual)}</div>
+              </div>
+
+              <div style={{ height: 12 }} />
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>Ventas por mes (últimos 12)</div>
+              <div style={{ width: '100%', height: 240 }}>
+                <ResponsiveContainer>
+                  <BarChart data={dashboardMonthlySales} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} width={60} />
+                    <Tooltip formatter={(v: any) => formatCurrency(Number(v || 0))} />
+                    <Bar dataKey="total" fill="var(--brand)" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="grid2">
             <div className="card">
               <h3 style={{ marginTop: 0 }}>Pendiente proveedor</h3>
               <div className="muted" style={{ marginTop: -6 }}>Ventas con pago a proveedor pendiente (para confirmar envío/pago).</div>
@@ -953,6 +1151,7 @@ const App: React.FC = () => {
               <div className="muted">Próximas citas (semana actual):</div>
               <div style={{ height: 10 }} />
               {appointments
+                .filter((a) => String(a.status || 'scheduled') !== 'cancelled' && new Date(a.start).getTime() >= (Date.now() - 60_000))
                 .slice()
                 .sort((a, b) => String(a.start).localeCompare(String(b.start)))
                 .slice(0, 10)
@@ -977,11 +1176,11 @@ const App: React.FC = () => {
               <div className="grid3">
                 <div>
                   <label className="label">Desde</label>
-                  <input className="input" type="date" value={cobranzaFrom} onChange={(e) => setCobranzaFrom(e.target.value)} />
+                  <input className="input" type="date" value={cobranzaFrom} onChange={(e) => { setDashboardPreset('rango'); setCobranzaFrom(e.target.value); }} />
                 </div>
                 <div>
                   <label className="label">Hasta</label>
-                  <input className="input" type="date" value={cobranzaTo} onChange={(e) => setCobranzaTo(e.target.value)} />
+                  <input className="input" type="date" value={cobranzaTo} onChange={(e) => { setDashboardPreset('rango'); setCobranzaTo(e.target.value); }} />
                 </div>
                 <div>
                   <label className="label">Resumen</label>
@@ -1043,6 +1242,62 @@ const App: React.FC = () => {
             </div>
 
             <div className="card">
+              <h3 style={{ marginTop: 0 }}>Pagos pendientes (por paciente)</h3>
+              <div className="muted" style={{ marginTop: -6, fontSize: 12 }}>Suma de saldos pendientes de todas las ventas.</div>
+              <div style={{ height: 10 }} />
+              <div className="list" style={{ maxHeight: 360, overflow: 'auto' }}>
+                {pendingByPatient.slice(0, 20).map((r, idx) => (
+                  <div key={idx} className="listRow" style={{ padding: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 800 }}>{r.patientName}</div>
+                      <div className="muted" style={{ fontSize: 12 }}>Ventas con saldo: {r.salesCount}</div>
+                    </div>
+                    <div style={{ fontWeight: 900 }}>{formatCurrency(r.pending)}</div>
+                  </div>
+                ))}
+                {!pendingByPatient.length ? <div className="muted">Sin pendientes.</div> : null}
+              </div>
+            </div>
+
+            <div className="card">
+              <h3 style={{ marginTop: 0 }}>Plantillas entregadas</h3>
+              <div className="muted" style={{ marginTop: -6, fontSize: 12 }}>Últimas ventas marcadas como entregadas.</div>
+              <div style={{ height: 10 }} />
+              <div className="list" style={{ maxHeight: 360, overflow: 'auto' }}>
+                {deliveredPlantillas.slice(0, 15).map((s) => (
+                  <div key={s.id} className="listRow" style={{ padding: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 800 }}>{s.patientName || '(Sin nombre)'} <span className="muted" style={{ fontWeight: 400 }}>· {s.folio}</span></div>
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        {(s as any).deliveryActualAt ? String((s as any).deliveryActualAt).slice(0, 10) : new Date(s.createdAt).toLocaleDateString('es-MX')} · Total {formatCurrency(Number(s.total || 0))}
+                      </div>
+                    </div>
+                    <button className="btn" onClick={() => setSalePrintTarget(s)}>Ver</button>
+                  </div>
+                ))}
+                {!deliveredPlantillas.length ? <div className="muted">Aún no hay entregas.</div> : null}
+              </div>
+            </div>
+
+            <div className="card">
+              <h3 style={{ marginTop: 0 }}>Renovaciones (próximo mes)</h3>
+              <div className="muted" style={{ marginTop: -6, fontSize: 12 }}>Basado en <code>followUpAt</code>.</div>
+              <div style={{ height: 10 }} />
+              <div className="list" style={{ maxHeight: 360, overflow: 'auto' }}>
+                {renewalsNextMonth.slice(0, 20).map((s) => (
+                  <div key={s.id} className="listRow" style={{ padding: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 800 }}>{s.patientName || '(Sin nombre)'}</div>
+                      <div className="muted" style={{ fontSize: 12 }}>{String((s as any).followUpAt || '').slice(0, 10)} · {s.folio}</div>
+                    </div>
+                    <div className="muted" style={{ fontSize: 12 }}>Recordar</div>
+                  </div>
+                ))}
+                {!renewalsNextMonth.length ? <div className="muted">Sin renovaciones programadas para el próximo mes.</div> : null}
+              </div>
+            </div>
+
+            <div className="card">
               <h3 style={{ marginTop: 0 }}>Proveedor mensual</h3>
               <div className="muted" style={{ marginTop: -6, fontSize: 12 }}>Agrupado por mes de <code>providerSentAt</code> (enviado a proveedor).</div>
               <div style={{ height: 10 }} />
@@ -1081,6 +1336,7 @@ const App: React.FC = () => {
                 );
               })()}
             </div>
+          </div>
           </div>
         ) : null}
 
