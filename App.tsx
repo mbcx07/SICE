@@ -111,6 +111,11 @@ const App: React.FC = () => {
   const [cpNew, setCpNew] = useState('');
   const [cpShowNew, setCpShowNew] = useState(false);
 
+  // Settings drafts (avoid "can't type" when saving on every keypress)
+  const [calendarUrlDraft, setCalendarUrlDraft] = useState('');
+  const [calendarSecretDraft, setCalendarSecretDraft] = useState('');
+  const [savingCalendar, setSavingCalendar] = useState(false);
+
   const printRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -143,6 +148,11 @@ const App: React.FC = () => {
   }, [settings.themeColor]);
 
   const resolvedLogo = settings.logoDataUrl ? settings.logoDataUrl : defaultLogoUrl;
+
+  useEffect(() => {
+    setCalendarUrlDraft(String(settings.calendarWebhookUrl || ''));
+    setCalendarSecretDraft(String(settings.calendarWebhookSecret || ''));
+  }, [settings.calendarWebhookUrl, settings.calendarWebhookSecret]);
 
   useEffect(() => {
     if (!user) return;
@@ -1040,8 +1050,8 @@ const App: React.FC = () => {
               <label className="label">Webhook URL</label>
               <input
                 className="input"
-                value={settings.calendarWebhookUrl || ''}
-                onChange={(e) => dbService.updateSiceSettings({ calendarWebhookUrl: e.target.value })}
+                value={calendarUrlDraft}
+                onChange={(e) => setCalendarUrlDraft(e.target.value)}
                 placeholder="https://script.google.com/macros/s/.../exec"
               />
 
@@ -1049,10 +1059,33 @@ const App: React.FC = () => {
               <label className="label">Secret</label>
               <input
                 className="input"
-                value={settings.calendarWebhookSecret || ''}
-                onChange={(e) => dbService.updateSiceSettings({ calendarWebhookSecret: e.target.value })}
+                value={calendarSecretDraft}
+                onChange={(e) => setCalendarSecretDraft(e.target.value)}
                 placeholder="(igual al SICE_WEBHOOK_SECRET del script)"
               />
+
+              <div style={{ height: 10 }} />
+              <button
+                className="btnPrimary"
+                disabled={savingCalendar}
+                onClick={async () => {
+                  try {
+                    setSavingCalendar(true);
+                    await dbService.updateSiceSettings({
+                      calendarWebhookUrl: calendarUrlDraft.trim(),
+                      calendarWebhookSecret: calendarSecretDraft.trim()
+                    } as any);
+                    setUiMessage('Automatización guardada.');
+                    setTimeout(() => setUiMessage(null), 1500);
+                  } catch (e: any) {
+                    setUiMessage(e?.message || 'No se pudo guardar automatización.');
+                  } finally {
+                    setSavingCalendar(false);
+                  }
+                }}
+              >
+                {savingCalendar ? 'Guardando…' : 'Guardar'}
+              </button>
 
               <div style={{ height: 10 }} />
               <label style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
