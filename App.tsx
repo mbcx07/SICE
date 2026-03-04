@@ -76,9 +76,12 @@ const App: React.FC = () => {
   // public intake
   const isPublicRegister = typeof window !== 'undefined' && window.location.hash.toLowerCase().includes('registro');
   const [intakes, setIntakes] = useState<IntakeRequest[]>([]);
+  const [intakeSearch, setIntakeSearch] = useState('');
   const [intakeDraft, setIntakeDraft] = useState<{ fullName: string; phone: string; email: string; residence: string }>(() => ({ fullName: '', phone: '', email: '', residence: '' }));
   const [intakeSent, setIntakeSent] = useState(false);
   const [intakeSending, setIntakeSending] = useState(false);
+  const [intakeBusyId, setIntakeBusyId] = useState<string | null>(null);
+  const [intakeEdit, setIntakeEdit] = useState<IntakeRequest | null>(null);
 
 
   // catalog
@@ -1026,44 +1029,122 @@ const App: React.FC = () => {
         ) : null}
 
         {tab === 'intakes' ? (
+          <>
           <div className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
               <h3 style={{ margin: 0 }}>Registros (formulario)</h3>
               <div className="muted">Total: {intakes.length}</div>
             </div>
+
             <div className="muted" style={{ marginTop: 8 }}>
               Enlace público para pacientes:
               <div><code>{`${window.location.origin}${(import.meta as any).env?.BASE_URL || '/'}#/registro`}</code></div>
             </div>
+
+            <div style={{ height: 12 }} />
+            <input className="input" value={intakeSearch} onChange={(e) => setIntakeSearch(e.target.value)} placeholder="Buscar por nombre / teléfono / correo" />
+
             <div style={{ height: 12 }} />
             <div className="list">
-              {intakes.map((r) => (
-                <div key={r.id} className="listRow" style={{ padding: 10 }}>
+              {intakes
+                .filter((r) => {
+                  const q = intakeSearch.trim().toLowerCase();
+                  if (!q) return true;
+                  const hay = `${r.fullName || ''} ${r.phone || ''} ${r.email || ''} ${r.residence || ''}`.toLowerCase();
+                  return hay.includes(q);
+                })
+                .map((r) => (
+                <div key={r.id} className="listRow" style={{ padding: 10, opacity: (r.status === 'approved' || r.status === 'rejected') ? 0.65 : 1 }}>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 800 }}>{r.fullName}</div>
+                    <div style={{ fontWeight: 800, display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <span>{r.fullName}</span>
+                      {r.status === 'approved' ? <span className="pill">Aprobado</span> : null}
+                      {r.status === 'rejected' ? <span className="pill" style={{ background: '#fee2e2', borderColor: '#fecaca', color: '#991b1b' }}>Rechazado</span> : null}
+                      {!r.status || r.status === 'new' ? <span className="pill" style={{ background: '#e0f2fe', borderColor: '#bae6fd', color: '#075985' }}>Nuevo</span> : null}
+                    </div>
                     <div className="muted" style={{ fontSize: 12 }}>{r.phone} · {r.email} · {r.residence}</div>
-                    <div className="muted" style={{ fontSize: 12 }}>Estatus: {r.status || 'new'}</div>
                   </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button className="btnPrimary" onClick={async () => {
-                      await dbService.upsertPatient({
-                        name: r.fullName,
-                        phone: r.phone,
-                        email: r.email,
-                        notesGeneral: `Residencia: ${r.residence}`
-                      } as any);
-                      await dbService.markIntakeApproved(r.id);
-                    }}>Aprobar</button>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <button className="btn" onClick={() => setIntakeEdit(r)}>Editar</button>
                     <button className="btnDanger" onClick={async () => {
+                      if (!confirm('¿Eliminar registro?')) return;
+                      setIntakeBusyId(r.id);
+                      try {
+                        await dbService.deleteIntake(r.id);
+                      } finally {
+                        setIntakeBusyId(null);
+                      }
+                    }} disabled={intakeBusyId === r.id}>Eliminar</button>
+
+                    <button className="btnPrimary" disabled={intakeBusyId === r.id || r.status === 'approved'} onClick={async () => {
+                      setIntakeBusyId(r.id);
+                      try {
+                        await dbService.createOrUpdatePatientFromIntake({ fullName: r.fullName, phone: r.phone, email: r.email, residence: r.residence });
+                        await dbService.markIntakeApproved(r.id);
+                      } finally {
+                        setIntakeBusyId(null);
+                      }
+                    }}>{r.status === 'approved' ? 'Aprobado' : 'Aprobar'}</button>
+
+                    <button className="btnDanger" disabled={intakeBusyId === r.id || r.status === 'rejected'} onClick={async () => {
                       if (!confirm('¿Rechazar registro?')) return;
-                      await dbService.markIntakeRejected(r.id);
-                    }}>Rechazar</button>
+                      setIntakeBusyId(r.id);
+                      try {
+                        await dbService.markIntakeRejected(r.id);
+                      } finally {
+                        setIntakeBusyId(null);
+                      }
+                    }}>{r.status === 'rejected' ? 'Rechazado' : 'Rechazar'}</button>
                   </div>
                 </div>
               ))}
               {!intakes.length ? <div className="muted">Sin registros.</div> : null}
             </div>
           </div>
+
+          {intakeEdit ? (
+            <div className="modalOverlay" onClick={() => setIntakeEdit(null)}>
+              <div className="modal" onClick={(e) => e.stopPropagation()}>
+                <h3 style={{ marginTop: 0 }}>Editar registro</h3>
+
+                <label className="label">Nombre completo</label>
+                <input className="input" value={intakeEdit.fullName || ''} onChange={(e) => setIntakeEdit((s) => s ? ({ ...s, fullName: e.target.value }) : s)} />
+
+                <div style={{ height: 10 }} />
+                <label className="label">Número de celular</label>
+                <input className="input" value={intakeEdit.phone || ''} onChange={(e) => setIntakeEdit((s) => s ? ({ ...s, phone: e.target.value }) : s)} />
+
+                <div style={{ height: 10 }} />
+                <label className="label">Correo electrónico</label>
+                <input className="input" value={intakeEdit.email || ''} onChange={(e) => setIntakeEdit((s) => s ? ({ ...s, email: e.target.value }) : s)} />
+
+                <div style={{ height: 10 }} />
+                <label className="label">Lugar de residencia</label>
+                <input className="input" value={intakeEdit.residence || ''} onChange={(e) => setIntakeEdit((s) => s ? ({ ...s, residence: e.target.value }) : s)} />
+
+                <div style={{ height: 14 }} />
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <button className="btn" onClick={() => setIntakeEdit(null)}>Cancelar</button>
+                  <button className="btnPrimary" onClick={async () => {
+                    if (!intakeEdit) return;
+                    setIntakeBusyId(intakeEdit.id);
+                    try {
+                      await dbService.updateIntake(intakeEdit.id, {
+                        fullName: intakeEdit.fullName,
+                        phone: intakeEdit.phone,
+                        email: intakeEdit.email,
+                        residence: intakeEdit.residence
+                      } as any);
+                      setIntakeEdit(null);
+                    } finally {
+                      setIntakeBusyId(null);
+                    }
+                  }} disabled={intakeBusyId === intakeEdit.id}>Guardar</button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          </>
         ) : null}
 
         {tab === 'appointments' ? (

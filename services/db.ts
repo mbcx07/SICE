@@ -1108,6 +1108,18 @@ export const dbService = {
     return () => unsub();
   },
 
+  async updateIntake(id: string, patch: Partial<IntakeRequest>): Promise<void> {
+    const user = await ensureSession();
+    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
+    await updateDoc(doc(db, 'intakes', id), { ...patch } as any);
+  },
+
+  async deleteIntake(id: string): Promise<void> {
+    const user = await ensureSession();
+    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
+    await deleteDoc(doc(db, 'intakes', id));
+  },
+
   async markIntakeApproved(id: string): Promise<void> {
     const user = await ensureSession();
     if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
@@ -1118,6 +1130,42 @@ export const dbService = {
     const user = await ensureSession();
     if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
     await updateDoc(doc(db, 'intakes', id), { status: 'rejected', approvedAt: serverTimestamp() } as any);
+  },
+
+  async createOrUpdatePatientFromIntake(input: { fullName: string; phone: string; email: string; residence: string }): Promise<string> {
+    const user = await ensureSession();
+    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
+
+    const name = String(input.fullName || '').trim();
+    const phone = String(input.phone || '').trim();
+    const email = String(input.email || '').trim();
+    const residence = String(input.residence || '').trim();
+
+    // Try match by phone first
+    if (phone) {
+      const qPhone = query(collection(db, 'patients'), where('phone', '==', phone), limit(1));
+      const snap = await getDocs(qPhone);
+      if (!snap.empty) {
+        const d = snap.docs[0];
+        await setDoc(doc(db, 'patients', d.id), { name, phone, email, notesGeneral: `Residencia: ${residence}`, updatedAt: nowIso() } as any, { merge: true });
+        return d.id;
+      }
+    }
+
+    // Then match by email
+    if (email) {
+      const qEmail = query(collection(db, 'patients'), where('email', '==', email), limit(1));
+      const snap = await getDocs(qEmail);
+      if (!snap.empty) {
+        const d = snap.docs[0];
+        await setDoc(doc(db, 'patients', d.id), { name, phone, email, notesGeneral: `Residencia: ${residence}`, updatedAt: nowIso() } as any, { merge: true });
+        return d.id;
+      }
+    }
+
+    // Otherwise create a new patient
+    const newId = await this.upsertPatient({ name, phone, email, notesGeneral: `Residencia: ${residence}` } as any);
+    return newId;
   },
 
   // Catalog
