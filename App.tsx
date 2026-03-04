@@ -10,9 +10,9 @@ import {
   dbService
 } from './services/db';
 import type { Appointment, CatalogItem, Patient, Sale, SaleLineItem, SiceSettings, User } from './types';
-import { CalendarDays, LogOut, Settings as SettingsIcon, Users, ShoppingCart, Package, KeyRound, Printer, Trash2, PlusCircle, Search } from 'lucide-react';
+import { CalendarDays, LogOut, Settings as SettingsIcon, Users, ShoppingCart, Package, KeyRound, Printer, Trash2, PlusCircle, Search, LayoutDashboard } from 'lucide-react';
 
-type Tab = 'patients' | 'sales' | 'appointments' | 'settings';
+type Tab = 'dashboard' | 'patients' | 'sales' | 'appointments' | 'settings';
 
 const formatCurrency = (value: number) => `$${Number(value || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const clampColor = (v: string) => (String(v || '').trim() || '#0ea5e9');
@@ -59,7 +59,7 @@ function addMonthsIso(baseIso: string, months: number): string {
 const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
-  const [tab, setTab] = useState<Tab>('patients');
+  const [tab, setTab] = useState<Tab>('dashboard');
   const [error, setError] = useState<string | null>(null);
   const [uiMessage, setUiMessage] = useState<string | null>(null);
 
@@ -562,7 +562,8 @@ const App: React.FC = () => {
           {resolvedLogo ? <img src={resolvedLogo} alt="Logo" className="brandLogo" /> : <div className="brandLogoFallback" />}
           <div>
             <div className="brandTitle">Diagnostic Support del Noroeste</div>
-            <div className="brandSub">{user.nombre} · {user.unidad}</div>
+            {/* Subtítulo oculto por solicitud (evitar mostrar usuario/unidad en header) */}
+            <div className="brandSub" style={{ display: 'none' }}>{user.nombre} · {user.unidad}</div>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -572,6 +573,7 @@ const App: React.FC = () => {
       </header>
 
       <nav className="tabs">
+        <button className={tab === 'dashboard' ? 'tab active' : 'tab'} onClick={() => setTab('dashboard')}><LayoutDashboard size={16} />&nbsp;Tablero</button>
         <button className={tab === 'patients' ? 'tab active' : 'tab'} onClick={() => setTab('patients')}><Users size={16} />&nbsp;Pacientes</button>
         <button className={tab === 'sales' ? 'tab active' : 'tab'} onClick={() => setTab('sales')}><ShoppingCart size={16} />&nbsp;Ventas</button>
         <button className={tab === 'appointments' ? 'tab active' : 'tab'} onClick={() => setTab('appointments')}><CalendarDays size={16} />&nbsp;Agenda</button>
@@ -581,6 +583,19 @@ const App: React.FC = () => {
       {uiMessage ? <div className="toast">{uiMessage}</div> : null}
 
       <main className="content">
+        {tab === 'dashboard' ? (
+          <div className="grid2">
+            <div className="card">
+              <h3 style={{ marginTop: 0 }}>Resumen</h3>
+              <div className="muted">(En construcción) Aquí irá el tablero con filtros por quincena/mes/año y gráficas.</div>
+            </div>
+            <div className="card">
+              <h3 style={{ marginTop: 0 }}>Agenda</h3>
+              <div className="muted">(En construcción) Próximas citas, entregas, pendientes y renovaciones.</div>
+            </div>
+          </div>
+        ) : null}
+
         {tab === 'patients' ? (
           <div className="grid2">
             <div className="card">
