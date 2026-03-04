@@ -211,7 +211,7 @@ const App: React.FC = () => {
       setError(null);
       setUiMessage(null);
       setLoading(true);
-      const profile = await loginWithMatricula(matricula, password);
+      const profile = await loginWithMatricula(matricula.trim(), password.trim());
       setUser(profile);
       setTab('patients');
       setPassword('');
