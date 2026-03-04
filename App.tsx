@@ -316,7 +316,11 @@ const App: React.FC = () => {
       .filter((s) => !s.providerPaid && Number(s.providerDue || 0) > 0 && String((s as any).providerSentAt || '').slice(0, 7) === thisMonth)
       .reduce((acc, s) => acc + Number(s.providerDue || 0), 0);
 
-    return { ventas, costo, iva, mp, gananciaNeta, proveedorPendienteMensual, proveedorMes: thisMonth };
+    const proveedorPendienteAcumulado = (sales || [])
+      .filter((s) => !s.providerPaid && Number(s.providerDue || 0) > 0)
+      .reduce((acc, s) => acc + Number(s.providerDue || 0), 0);
+
+    return { ventas, costo, iva, mp, gananciaNeta, proveedorPendienteMensual, proveedorPendienteAcumulado, proveedorMes: thisMonth };
   }, [dashboardSales, sales]);
 
   const dashboardMonthlySales = useMemo(() => {
