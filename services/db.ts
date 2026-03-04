@@ -475,17 +475,17 @@ export const loginWithMatricula = async (matricula: string, password: string): P
 
     const finalCode = lastAuthError?.code || '';
     if (finalCode === 'auth/invalid-credential' || finalCode === 'auth/user-not-found' || finalCode === 'auth/wrong-password') {
-      throw new AuthError('INVALID_CREDENTIALS', 'Matricula o contrasena incorrecta.');
+      throw new AuthError('INVALID_CREDENTIALS', 'Usuario o contraseña incorrecta.');
     }
 
-    throw new AuthError('INVALID_CREDENTIALS', 'Matricula o contrasena incorrecta.');
+    throw new AuthError('INVALID_CREDENTIALS', 'Usuario o contraseña incorrecta.');
   } catch (error: any) {
     if (error instanceof AuthError) throw error;
     const code = error?.code || '';
     if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
-      throw new AuthError('INVALID_CREDENTIALS', 'Matricula o contrasena incorrecta.');
+      throw new AuthError('INVALID_CREDENTIALS', 'Usuario o contraseña incorrecta.');
     }
-    throw new AuthError('INVALID_CREDENTIALS', 'Matricula o contrasena incorrecta.');
+    throw new AuthError('INVALID_CREDENTIALS', 'Usuario o contraseña incorrecta.');
   }
 };
 
