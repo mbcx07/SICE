@@ -453,7 +453,7 @@ const App: React.FC = () => {
         : rawU;
       const profile = await loginWithMatricula(mappedU, password.trim());
       setUser(profile);
-      setTab('patients');
+      setTab('dashboard');
       setPassword('');
     } catch (e: any) {
       if (e instanceof AuthError) setError(e.message);
@@ -468,6 +468,7 @@ const App: React.FC = () => {
       setLoading(true);
       await logoutSession();
       setUser(null);
+      setTab('dashboard');
       setMatricula('');
       setPassword('');
     } finally {
@@ -1327,7 +1328,7 @@ const App: React.FC = () => {
                       <div style={{ fontWeight: 800 }}>{s.patientName || '(Sin nombre)'}</div>
                       <div className="muted" style={{ fontSize: 12 }}>{String((s as any).followUpAt || '').slice(0, 10)} · {s.folio}</div>
                     </div>
-                    <div className="muted" style={{ fontSize: 12 }}>Recordar</div>
+
                   </div>
                 ))}
                 {!renewalsNextMonth.length ? <div className="muted">Sin renovaciones programadas para el próximo mes.</div> : null}
@@ -1368,7 +1369,7 @@ const App: React.FC = () => {
                         </div>
                       </div>
                     ))}
-                    {!rows.length ? <div className="muted">Aún no hay registros con providerSentAt.</div> : null}
+                    {!rows.length ? <div className="muted">Aún no hay registros.</div> : null}
                   </div>
                 );
               })()}
