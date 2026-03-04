@@ -172,9 +172,12 @@ const resolveTramiteImporte = (t: any): number => {
 const PRIMARY_ADMIN_MATRICULA = '99032103';
 const MATRICULA_EMAIL_OVERRIDES: Record<string, string> = {
   '99032103': 'moises.beltran@imss.gob.mx',
+  // SICE: allow simple usernames
+  'LUISANA': 'dgnstcspprtdlnrst@gmail.com',
 };
 const MATRICULA_EMAIL_ALIASES: Record<string, string[]> = {
   '99032103': ['moises.beltran@imss.gob.mx', 'moises.beltranx7@gmail.com'],
+  'LUISANA': ['dgnstcspprtdlnrst@gmail.com'],
 };
 const matriculaToEmail = (matricula: string) => {
   const normalized = normalizeMatricula(matricula);
