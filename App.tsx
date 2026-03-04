@@ -1316,7 +1316,7 @@ const App: React.FC = () => {
 
             <div className="card">
               <h3 style={{ marginTop: 0 }}>Renovaciones (próximo mes)</h3>
-              <div className="muted" style={{ marginTop: -6, fontSize: 12 }}>Basado en <code>followUpAt</code>.</div>
+
               <div style={{ height: 10 }} />
               <div className="list" style={{ maxHeight: 360, overflow: 'auto' }}>
                 {renewalsNextMonth.slice(0, 20).map((s) => (
