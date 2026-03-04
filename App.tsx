@@ -171,6 +171,7 @@ const App: React.FC = () => {
     if (!user) return;
     const unsubPatients = dbService.watchPatients(setPatients);
     const unsubCatalog = dbService.watchCatalogItems(setCatalog);
+    const unsubIntakes = dbService.watchIntakes(setIntakes);
 
     const year = new Date().getFullYear();
     let unsubSales: null | (() => void) = null;
@@ -184,6 +185,7 @@ const App: React.FC = () => {
     return () => {
       unsubPatients();
       unsubCatalog();
+      unsubIntakes();
       if (unsubSales) unsubSales();
       unsubAppts();
     };
