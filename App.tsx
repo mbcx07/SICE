@@ -216,6 +216,26 @@ const App: React.FC = () => {
     return m;
   }, [patients]);
 
+  const patientDuplicates = useMemo(() => {
+    const normPhone = (v: any) => String(v || '').replace(/\D/g, '').trim();
+    const normEmail = (v: any) => String(v || '').trim().toLowerCase();
+
+    const byKey = new Map<string, Patient[]>();
+    for (const p of patients) {
+      const phone = normPhone(p.phone);
+      const email = normEmail(p.email);
+      const key = phone ? `phone:${phone}` : (email ? `email:${email}` : '');
+      if (!key) continue;
+      const arr = byKey.get(key) || [];
+      arr.push(p);
+      byKey.set(key, arr);
+    }
+
+    return Array.from(byKey.values())
+      .filter((arr) => arr.length > 1)
+      .map((items) => items.slice().sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || ''))));
+  }, [patients]);
+
   const catalogById = useMemo(() => {
     const m = new Map<string, CatalogItem>();
     for (const c of catalog) m.set(c.id, c);
@@ -753,6 +773,33 @@ const App: React.FC = () => {
                   <input className="input" style={{ width: 220 }} value={patientSearch} onChange={(e) => setPatientSearch(e.target.value)} placeholder="Buscar" />
                 </div>
               </div>
+              {patientDuplicates.length ? (
+                <div className="card" style={{ background: '#fffbeb', borderColor: '#fde68a', marginBottom: 12 }}>
+                  <div style={{ fontWeight: 800 }}>Duplicados detectados</div>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                    Se detectaron pacientes con el mismo teléfono o correo. Conserva el primero y elimina los demás.
+                  </div>
+                  <div style={{ height: 10 }} />
+                  {patientDuplicates.slice(0, 10).map((group, idx) => (
+                    <div key={idx} className="listRow" style={{ padding: 8 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700 }}>{group[0]?.phone || group[0]?.email}</div>
+                        <div className="muted" style={{ fontSize: 12 }}>{group.map((p) => p.name).join(' · ')}</div>
+                      </div>
+                      <button className="btnDanger" onClick={async () => {
+                        if (!confirm('¿Eliminar duplicados (dejando solo el primero)?')) return;
+                        // keep first, delete rest
+                        for (const p of group.slice(1)) {
+                          await dbService.deletePatient(p.id);
+                        }
+                        setUiMessage('Duplicados eliminados.');
+                        setTimeout(() => setUiMessage(null), 2000);
+                      }}>Eliminar duplicados</button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
               <div style={{ height: 12 }} />
               <div className="list">
                 {filteredPatients.map((p) => (
