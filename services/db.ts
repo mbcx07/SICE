@@ -1057,7 +1057,7 @@ export const dbService = {
     await setDoc(doc(db, 'siceSettings', 'global'), {
       ...patch,
       updatedAt: nowIso(),
-      updatedBy: user.uid
+      updatedBy: (user as any).uid || (user as any).id
     }, { merge: true });
   },
 
