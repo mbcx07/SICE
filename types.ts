@@ -249,3 +249,14 @@ export interface SiceSettings {
   updatedAt?: string;
   updatedBy?: string;
 }
+
+export interface IntakeRequest {
+  id: string;
+  fullName: string;
+  phone: string;
+  email: string;
+  residence: string;
+  status?: 'new' | 'approved' | 'rejected';
+  createdAt?: any;
+  approvedAt?: any;
+}

@@ -223,6 +223,14 @@ service cloud.firestore {
       allow delete: if activeUser() && isAdmin();
     }
 
+    // Formulario público (registro de paciente antes de agendar)
+    match /intakes/{id} {
+      // Permitir que cualquiera envíe un registro (sin login)
+      allow create: if true;
+      // Solo perfiles activos pueden ver/gestionar
+      allow read, update, delete: if activeUser();
+    }
+
     // Deny-all por defecto fuera de matches explícitos
   }
 }

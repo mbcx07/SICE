@@ -9,10 +9,10 @@ import {
   AuthError,
   dbService
 } from './services/db';
-import type { Appointment, CatalogItem, Patient, Sale, SaleLineItem, SiceSettings, User } from './types';
-import { CalendarDays, LogOut, Settings as SettingsIcon, Users, ShoppingCart, Package, KeyRound, Printer, Trash2, PlusCircle, Search, LayoutDashboard } from 'lucide-react';
+import type { Appointment, CatalogItem, Patient, Sale, SaleLineItem, SiceSettings, User, IntakeRequest } from './types';
+import { CalendarDays, LogOut, Settings as SettingsIcon, Users, ShoppingCart, Package, KeyRound, Printer, Trash2, PlusCircle, Search, LayoutDashboard, ClipboardList } from 'lucide-react';
 
-type Tab = 'dashboard' | 'patients' | 'sales' | 'appointments' | 'settings';
+type Tab = 'dashboard' | 'patients' | 'sales' | 'appointments' | 'intakes' | 'settings';
 
 const formatCurrency = (value: number) => `$${Number(value || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const clampColor = (v: string) => (String(v || '').trim() || '#0ea5e9');
@@ -73,6 +73,14 @@ const App: React.FC = () => {
   const [patientSearch, setPatientSearch] = useState('');
   const [patientDraft, setPatientDraft] = useState<Partial<Patient>>({});
 
+  // public intake
+  const isPublicRegister = typeof window !== 'undefined' && window.location.hash.toLowerCase().includes('registro');
+  const [intakes, setIntakes] = useState<IntakeRequest[]>([]);
+  const [intakeDraft, setIntakeDraft] = useState<{ fullName: string; phone: string; email: string; residence: string }>(() => ({ fullName: '', phone: '', email: '', residence: '' }));
+  const [intakeSent, setIntakeSent] = useState(false);
+  const [intakeSending, setIntakeSending] = useState(false);
+
+
   // catalog
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [catalogDraft, setCatalogDraft] = useState<Partial<CatalogItem>>({ type: 'product', active: true });
@@ -119,6 +127,11 @@ const App: React.FC = () => {
   const printRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    if (isPublicRegister) {
+      setLoading(false);
+      return;
+    }
+
     let mounted = true;
     (async () => {
       try {
@@ -136,7 +149,7 @@ const App: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [isPublicRegister]);
 
   useEffect(() => {
     const unsub = dbService.watchSiceSettings(setSettings);
@@ -459,12 +472,84 @@ const App: React.FC = () => {
     }
   };
 
-  if (loading && !user) {
+  if (loading && !user && !isPublicRegister) {
     return (
       <div className="appShell">
         <div className="card" style={{ maxWidth: 420, margin: '64px auto' }}>
           <h2>SICE</h2>
           <p>Cargando…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isPublicRegister) {
+    return (
+      <div className="appShell">
+        <div className="card" style={{ maxWidth: 520, margin: '48px auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {resolvedLogo ? <img src={resolvedLogo} alt="Logo" style={{ height: 48, width: 48, objectFit: 'contain' }} /> : null}
+            <div>
+              <h2 style={{ margin: 0 }}>Diagnostic Support del Noroeste</h2>
+              <div className="muted">Registro de paciente</div>
+            </div>
+          </div>
+
+          <div style={{ height: 18 }} />
+
+          {intakeSent ? (
+            <div className="card" style={{ background: '#f0fdf4', borderColor: '#bbf7d0' }}>
+              <div style={{ fontWeight: 800 }}>Listo</div>
+              <div className="muted">Tu información fue enviada correctamente.</div>
+            </div>
+          ) : (
+            <>
+              <label className="label">Nombre completo</label>
+              <input className="input" value={intakeDraft.fullName} onChange={(e) => setIntakeDraft((s) => ({ ...s, fullName: e.target.value }))} />
+
+              <div style={{ height: 12 }} />
+              <label className="label">Número de celular</label>
+              <input className="input" value={intakeDraft.phone} onChange={(e) => setIntakeDraft((s) => ({ ...s, phone: e.target.value }))} />
+
+              <div style={{ height: 12 }} />
+              <label className="label">Correo electrónico</label>
+              <input className="input" value={intakeDraft.email} onChange={(e) => setIntakeDraft((s) => ({ ...s, email: e.target.value }))} />
+
+              <div style={{ height: 12 }} />
+              <label className="label">Lugar de residencia</label>
+              <input className="input" value={intakeDraft.residence} onChange={(e) => setIntakeDraft((s) => ({ ...s, residence: e.target.value }))} />
+
+              {uiMessage ? <div className="toast" style={{ position: 'static', marginTop: 12 }}>{uiMessage}</div> : null}
+
+              <div style={{ height: 14 }} />
+              <button
+                className="btnPrimary"
+                disabled={intakeSending}
+                onClick={async () => {
+                  const fullName = intakeDraft.fullName.trim();
+                  const phone = intakeDraft.phone.trim();
+                  const email = intakeDraft.email.trim();
+                  const residence = intakeDraft.residence.trim();
+                  if (!fullName || !phone || !email || !residence) {
+                    setUiMessage('Completa todos los campos.');
+                    return;
+                  }
+                  try {
+                    setIntakeSending(true);
+                    setUiMessage(null);
+                    await dbService.createIntake({ fullName, phone, email, residence });
+                    setIntakeSent(true);
+                  } catch (e: any) {
+                    setUiMessage(e?.message || 'No se pudo enviar.');
+                  } finally {
+                    setIntakeSending(false);
+                  }
+                }}
+              >
+                {intakeSending ? 'Enviando…' : 'Enviar'}
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
@@ -589,6 +674,7 @@ const App: React.FC = () => {
         <button className={tab === 'patients' ? 'tab active' : 'tab'} onClick={() => setTab('patients')}><Users size={16} />&nbsp;Pacientes</button>
         <button className={tab === 'sales' ? 'tab active' : 'tab'} onClick={() => setTab('sales')}><ShoppingCart size={16} />&nbsp;Ventas</button>
         <button className={tab === 'appointments' ? 'tab active' : 'tab'} onClick={() => setTab('appointments')}><CalendarDays size={16} />&nbsp;Agenda</button>
+        <button className={tab === 'intakes' ? 'tab active' : 'tab'} onClick={() => setTab('intakes')}><ClipboardList size={16} />&nbsp;Registros</button>
         <button className={tab === 'settings' ? 'tab active' : 'tab'} onClick={() => setTab('settings')}><SettingsIcon size={16} />&nbsp;Settings</button>
       </nav>
 
@@ -933,6 +1019,47 @@ const App: React.FC = () => {
                 ))}
                 {!catalog.length ? <div className="muted">Sin catálogo.</div> : null}
               </div>
+            </div>
+          </div>
+        ) : null}
+
+        {tab === 'intakes' ? (
+          <div className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0 }}>Registros (formulario)</h3>
+              <div className="muted">Total: {intakes.length}</div>
+            </div>
+            <div className="muted" style={{ marginTop: 8 }}>
+              Enlace público para pacientes:
+              <div><code>{`${window.location.origin}${(import.meta as any).env?.BASE_URL || '/'}#/registro`}</code></div>
+            </div>
+            <div style={{ height: 12 }} />
+            <div className="list">
+              {intakes.map((r) => (
+                <div key={r.id} className="listRow" style={{ padding: 10 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 800 }}>{r.fullName}</div>
+                    <div className="muted" style={{ fontSize: 12 }}>{r.phone} · {r.email} · {r.residence}</div>
+                    <div className="muted" style={{ fontSize: 12 }}>Estatus: {r.status || 'new'}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="btnPrimary" onClick={async () => {
+                      await dbService.upsertPatient({
+                        name: r.fullName,
+                        phone: r.phone,
+                        email: r.email,
+                        notesGeneral: `Residencia: ${r.residence}`
+                      } as any);
+                      await dbService.markIntakeApproved(r.id);
+                    }}>Aprobar</button>
+                    <button className="btnDanger" onClick={async () => {
+                      if (!confirm('¿Rechazar registro?')) return;
+                      await dbService.markIntakeRejected(r.id);
+                    }}>Rechazar</button>
+                  </div>
+                </div>
+              ))}
+              {!intakes.length ? <div className="muted">Sin registros.</div> : null}
             </div>
           </div>
         ) : null}

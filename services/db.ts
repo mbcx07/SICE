@@ -16,7 +16,8 @@ import {
   deleteDoc,
   onSnapshot,
   increment,
-  runTransaction
+  runTransaction,
+  serverTimestamp
 } from "firebase/firestore";
 import {
   getAuth,
@@ -31,7 +32,7 @@ import {
   reauthenticateWithCredential,
   updatePassword
 } from "firebase/auth";
-import { Tramite, Bitacora, Role, User, EstatusWorkflow, TipoBeneficiario, Patient, CatalogItem, Sale, Appointment, SiceSettings, SaleLineItem } from '../types';
+import { Tramite, Bitacora, Role, User, EstatusWorkflow, TipoBeneficiario, Patient, CatalogItem, Sale, Appointment, SiceSettings, SaleLineItem, IntakeRequest } from '../types';
 import { validateWorkflowTransition } from './workflow';
 
 const firebaseConfig = {
@@ -1081,6 +1082,42 @@ export const dbService = {
       });
     });
     return () => unsub();
+  },
+
+  // Public intake (no auth required)
+  async createIntake(input: { fullName: string; phone: string; email: string; residence: string }): Promise<string> {
+    const payload: any = {
+      fullName: String(input.fullName || '').trim(),
+      phone: String(input.phone || '').trim(),
+      email: String(input.email || '').trim(),
+      residence: String(input.residence || '').trim(),
+      status: 'new',
+      createdAt: serverTimestamp()
+    };
+    const ref = await addDoc(collection(db, 'intakes'), payload);
+    return ref.id;
+  },
+
+  // (owner) view intake
+  watchIntakes(onValue: (items: IntakeRequest[]) => void): () => void {
+    const q = query(collection(db, 'intakes'), orderBy('createdAt', 'desc'), limit(200));
+    const unsub = onSnapshot(q, (snap) => {
+      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as IntakeRequest[];
+      onValue(items);
+    }, () => onValue([]));
+    return () => unsub();
+  },
+
+  async markIntakeApproved(id: string): Promise<void> {
+    const user = await ensureSession();
+    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
+    await updateDoc(doc(db, 'intakes', id), { status: 'approved', approvedAt: serverTimestamp() } as any);
+  },
+
+  async markIntakeRejected(id: string): Promise<void> {
+    const user = await ensureSession();
+    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
+    await updateDoc(doc(db, 'intakes', id), { status: 'rejected', approvedAt: serverTimestamp() } as any);
   },
 
   // Catalog
