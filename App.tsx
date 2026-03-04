@@ -211,7 +211,11 @@ const App: React.FC = () => {
       setError(null);
       setUiMessage(null);
       setLoading(true);
-      const profile = await loginWithMatricula(matricula.trim(), password.trim());
+      const rawU = matricula.trim();
+      const mappedU = rawU.toLowerCase() === 'luisana'
+        ? 'dgnstcspprtdlnrst@gmail.com'
+        : rawU;
+      const profile = await loginWithMatricula(mappedU, password.trim());
       setUser(profile);
       setTab('patients');
       setPassword('');
