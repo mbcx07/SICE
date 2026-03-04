@@ -444,15 +444,20 @@ export const ensureSession = async (): Promise<User | null> => {
 };
 
 export const loginWithMatricula = async (matricula: string, password: string): Promise<User> => {
-  const matriculaNormalized = normalizeMatricula(matricula || '');
-  const loginValidationError = validateLoginInput(matricula, password);
+  const rawUser = String(matricula || '').trim();
+  const matriculaNormalized = normalizeMatricula(rawUser);
+  const loginValidationError = validateLoginInput(rawUser, password);
   if (loginValidationError) {
     throw new AuthError('INVALID_INPUT', loginValidationError);
   }
 
   try {
     await authPersistenceReady;
-    const candidates = matriculaToEmailCandidates(matriculaNormalized);
+
+    // If the user typed an email, use it directly.
+    const candidates = rawUser.includes('@')
+      ? [rawUser]
+      : matriculaToEmailCandidates(matriculaNormalized);
 
     let lastAuthError: any = null;
     for (const email of candidates) {
