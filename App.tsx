@@ -72,6 +72,7 @@ const App: React.FC = () => {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [patientSearch, setPatientSearch] = useState('');
   const [patientDraft, setPatientDraft] = useState<Partial<Patient>>({});
+  const [patientSales, setPatientSales] = useState<Sale[]>([]);
 
   // public intake
   const isPublicRegister = typeof window !== 'undefined' && window.location.hash.toLowerCase().includes('registro');
@@ -238,6 +239,16 @@ const App: React.FC = () => {
     for (const c of catalog) m.set(c.id, c);
     return m;
   }, [catalog]);
+
+  useEffect(() => {
+    const pid = String((patientDraft as any)?.id || '').trim();
+    if (!user || !pid) {
+      setPatientSales([]);
+      return;
+    }
+    const unsub = dbService.watchSalesByPatient(pid, setPatientSales);
+    return () => unsub();
+  }, [patientDraft, user]);
 
   const salePreview = useMemo(() => {
     const itemsSubtotal = (saleDraft.items || []).reduce((acc, it) => acc + Number(it.qty || 0) * Number(it.unitPrice || 0), 0);
@@ -829,6 +840,66 @@ const App: React.FC = () => {
               <div style={{ height: 10 }} />
               <label className="label">Notas</label>
               <textarea className="input" style={{ minHeight: 80 }} value={patientDraft.notes || ''} onChange={(e) => setPatientDraft((s) => ({ ...s, notes: e.target.value }))} />
+
+              {patientDraft.id ? (
+                <>
+                  <div style={{ height: 14 }} />
+                  <div className="card" style={{ background: '#f8fafc' }}>
+                    <h4 style={{ marginTop: 0, marginBottom: 8 }}>Histórico</h4>
+
+                    {(() => {
+                      const plantillaSales = (patientSales || []).filter((s) => Boolean((s as any).followUpAt) || Boolean((s as any).deliveryEstimatedAt));
+                      const lastPlantilla = plantillaSales[0] || null;
+                      const followUpAt = lastPlantilla ? String((lastPlantilla as any).followUpAt || '') : '';
+                      const target = followUpAt ? new Date(followUpAt) : null;
+                      const daysLeft = target && Number.isFinite(target.getTime()) ? Math.ceil((target.getTime() - Date.now()) / (24 * 3600 * 1000)) : null;
+
+                      return (
+                        <>
+                          <div className="grid3">
+                            <div className="stat">
+                              <div className="muted">Última compra</div>
+                              <div style={{ fontWeight: 800 }}>
+                                {patientSales[0]?.createdAt ? new Date(String(patientSales[0].createdAt)).toLocaleDateString('es-MX') : '—'}
+                              </div>
+                            </div>
+                            <div className="stat">
+                              <div className="muted">Últimas plantillas</div>
+                              <div style={{ fontWeight: 800 }}>
+                                {lastPlantilla?.createdAt ? new Date(String(lastPlantilla.createdAt)).toLocaleDateString('es-MX') : '—'}
+                              </div>
+                            </div>
+                            <div className="stat">
+                              <div className="muted">Renovación</div>
+                              <div style={{ fontWeight: 800 }}>
+                                {target && Number.isFinite(target.getTime())
+                                  ? `${target.toLocaleDateString('es-MX')} (${daysLeft !== null ? (daysLeft >= 0 ? `${daysLeft} días` : `hace ${Math.abs(daysLeft)} días`) : ''})`
+                                  : '—'}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div style={{ height: 10 }} />
+                          <div className="muted" style={{ fontSize: 12 }}>Ventas anteriores:</div>
+                          <div style={{ height: 6 }} />
+                          <div className="list">
+                            {(patientSales || []).slice(0, 20).map((s) => (
+                              <div key={s.id} className="listRow" style={{ padding: 10 }}>
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontWeight: 700 }}>{s.folio || s.id}</div>
+                                  <div className="muted" style={{ fontSize: 12 }}>{new Date(String(s.createdAt)).toLocaleString('es-MX')} · Total: <b>{formatCurrency(Number((s as any).total || 0))}</b></div>
+                                </div>
+                                <button className="btn" onClick={() => setSalePrintTarget(s)}>Ver nota</button>
+                              </div>
+                            ))}
+                            {!patientSales.length ? <div className="muted">Sin ventas registradas.</div> : null}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </>
+              ) : null}
 
               <div style={{ height: 14 }} />
               <div style={{ display: 'flex', gap: 8 }}>

@@ -1254,6 +1254,25 @@ export const dbService = {
   },
 
   // Sales (with annual folio counter)
+  watchSalesByPatient(patientId: string, onValue: (items: Sale[]) => void): () => void {
+    const pid = String(patientId || '').trim();
+    if (!pid) {
+      onValue([]);
+      return () => {};
+    }
+    const q = query(
+      collection(db, 'sales'),
+      where('patientId', '==', pid),
+      orderBy('createdAt', 'desc'),
+      limit(200)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Sale[];
+      onValue(items);
+    }, () => onValue([]));
+    return () => unsub();
+  },
+
   async watchSales(year: number, onValue: (items: Sale[]) => void): Promise<() => void> {
     const q = query(collection(db, 'sales'), where('year', '==', year), orderBy('consecutive', 'desc'), limit(2000));
     const unsub = onSnapshot(q, (snap) => {
