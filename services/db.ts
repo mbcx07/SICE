@@ -32,7 +32,7 @@ import {
   reauthenticateWithCredential,
   updatePassword
 } from "firebase/auth";
-import { Tramite, Bitacora, Role, User, EstatusWorkflow, TipoBeneficiario, Patient, CatalogItem, Sale, Appointment, SiceSettings, SaleLineItem, IntakeRequest } from '../types';
+import { Tramite, Bitacora, Role, User, EstatusWorkflow, TipoBeneficiario, Patient, CatalogItem, ProviderShipment, Sale, Appointment, SiceSettings, SaleLineItem, IntakeRequest } from '../types';
 import { validateWorkflowTransition } from './workflow';
 
 const firebaseConfig = {
@@ -1188,12 +1188,25 @@ export const dbService = {
     const user = await ensureSession();
     if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
 
+    const salePrice = Number((item as any).salePrice ?? item.unitPrice ?? 0);
+    const providerCost = Number((item as any).providerCost ?? item.unitCost ?? 0);
+
     const payload: any = {
       type: (item.type === 'service' ? 'service' : 'product'),
       name: String(item.name || '').trim(),
       sku: item.sku ? String(item.sku).trim() : '',
-      unitPrice: Number(item.unitPrice || 0),
-      unitCost: Number(item.unitCost || 0),
+
+      // preferred fields
+      salePrice,
+      providerCost,
+
+      // legacy mirror fields
+      unitPrice: salePrice,
+      unitCost: providerCost,
+
+      photoDataUrl: (item as any).photoDataUrl ? String((item as any).photoDataUrl) : '',
+      isTemplate: Boolean((item as any).isTemplate),
+
       active: item.active !== false,
       updatedAt: nowIso()
     };
@@ -1212,6 +1225,44 @@ export const dbService = {
     const user = await ensureSession();
     if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
     await deleteDoc(doc(db, 'catalogItems', id));
+  },
+
+  // Provider Shipments (monthly shipment/transport cost)
+  watchProviderShipments(onValue: (items: ProviderShipment[]) => void): () => void {
+    const q = query(collection(db, 'providerShipments'), orderBy('date', 'desc'), limit(2000));
+    const unsub = onSnapshot(q, (snap) => {
+      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as ProviderShipment[];
+      onValue(items);
+    }, () => onValue([]));
+    return () => unsub();
+  },
+
+  async upsertProviderShipment(sh: Partial<ProviderShipment> & { date: string }): Promise<string> {
+    const user = await ensureSession();
+    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
+
+    const payload: any = {
+      date: String(sh.date || '').slice(0, 10),
+      cost: Number(sh.cost ?? 348),
+      notes: sh.notes ? String(sh.notes) : '',
+      updatedAt: nowIso(),
+      createdBy: user.uid
+    };
+
+    if (sh.id) {
+      await setDoc(doc(db, 'providerShipments', sh.id), payload, { merge: true });
+      return sh.id;
+    }
+
+    payload.createdAt = nowIso();
+    const ref = await addDoc(collection(db, 'providerShipments'), payload);
+    return ref.id;
+  },
+
+  async deleteProviderShipment(id: string): Promise<void> {
+    const user = await ensureSession();
+    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
+    await deleteDoc(doc(db, 'providerShipments', id));
   },
 
   // Patients
@@ -1306,7 +1357,8 @@ export const dbService = {
 
     const year = new Date().getFullYear();
     const ivaRate = Number.isFinite(Number(input.ivaRate)) ? Number(input.ivaRate) : 0.16;
-    const shipping = Number(input.shipping || 0);
+    // Client shipping is no longer tracked.
+    const shipping = 0;
     const shippingCost = Number((input as any).shippingCost || 0);
     const items = Array.isArray(input.items) ? input.items : [];
 

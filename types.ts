@@ -157,11 +157,35 @@ export interface CatalogItem {
   type: CatalogItemType;
   name: string;
   sku?: string;
-  unitPrice: number; // price before IVA
-  unitCost: number;
+
+  // Business pricing (legacy)
+  // NOTE: kept for backward compatibility. Prefer salePrice/providerCost.
+  unitPrice?: number; // sale price before IVA
+  unitCost?: number;  // provider cost
+
+  // Business pricing (preferred)
+  salePrice?: number;     // sale price before IVA
+  providerCost?: number;  // provider cost
+
+  // Optional photo (data URL: data:image/...;base64,...)
+  photoDataUrl?: string;
+
+  // SICE-specific flags
+  isTemplate?: boolean; // when true, enables renewal follow-up logic
+
   active: boolean;
   createdAt: string;
   updatedAt?: string;
+}
+
+export interface ProviderShipment {
+  id: string;
+  date: string; // ISO date (yyyy-mm-dd)
+  cost: number; // MXN
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+  createdBy?: string;
 }
 
 export interface Patient {

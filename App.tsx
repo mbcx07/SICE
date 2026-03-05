@@ -9,8 +9,9 @@ import {
   AuthError,
   dbService
 } from './services/db';
-import type { Appointment, CatalogItem, Patient, Sale, SaleLineItem, SalePayment, SalePaymentMethod, SiceSettings, User, IntakeRequest } from './types';
-import { CalendarDays, LogOut, Settings as SettingsIcon, Users, ShoppingCart, Package, KeyRound, Printer, Trash2, PlusCircle, Search, LayoutDashboard, ClipboardList } from 'lucide-react';
+import type { Appointment, CatalogItem, ProviderShipment, Patient, Sale, SaleLineItem, SalePayment, SalePaymentMethod, SiceSettings, User, IntakeRequest } from './types';
+import { CalendarDays, LogOut, Settings as SettingsIcon, Users, ShoppingCart, Package, KeyRound, Printer, Trash2, PlusCircle, Search, LayoutDashboard, ClipboardList, Eye, EyeOff } from 'lucide-react';
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 
 type Tab = 'dashboard' | 'patients' | 'sales' | 'appointments' | 'intakes' | 'settings';
 
@@ -87,7 +88,17 @@ const App: React.FC = () => {
 
   // catalog
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
-  const [catalogDraft, setCatalogDraft] = useState<Partial<CatalogItem>>({ type: 'product', active: true });
+  const [catalogDraft, setCatalogDraft] = useState<Partial<CatalogItem>>({ type: 'product', active: true, isTemplate: false });
+
+  // provider shipments (provider transport cost)
+  const [providerShipments, setProviderShipments] = useState<ProviderShipment[]>([]);
+  const [providerShipmentDraft, setProviderShipmentDraft] = useState<Partial<ProviderShipment>>({
+    date: new Date().toISOString().slice(0, 10),
+    cost: 348,
+    notes: ''
+  });
+
+  const seededCatalogTemplatesRef = useRef(false);
 
   // sales
   const [sales, setSales] = useState<Sale[]>([]);
@@ -114,6 +125,8 @@ const App: React.FC = () => {
   const [salePaymentDraft, setSalePaymentDraft] = useState<Partial<SalePayment>>({ method: 'cash', amount: 0, date: new Date().toISOString().slice(0, 10) });
 
   // dashboard filters
+  type DashboardRangePreset = 'quincena' | 'mes' | 'anio' | 'rango';
+  const [dashboardPreset, setDashboardPreset] = useState<DashboardRangePreset>('mes');
   const [cobranzaFrom, setCobranzaFrom] = useState<string>(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10));
   const [cobranzaTo, setCobranzaTo] = useState<string>(() => new Date().toISOString().slice(0, 10));
 
@@ -184,6 +197,7 @@ const App: React.FC = () => {
     if (!user) return;
     const unsubPatients = dbService.watchPatients(setPatients);
     const unsubCatalog = dbService.watchCatalogItems(setCatalog);
+    const unsubProviderShipments = dbService.watchProviderShipments(setProviderShipments);
     const unsubIntakes = dbService.watchIntakes(setIntakes);
 
     const year = new Date().getFullYear();
@@ -198,11 +212,49 @@ const App: React.FC = () => {
     return () => {
       unsubPatients();
       unsubCatalog();
+      unsubProviderShipments();
       unsubIntakes();
       if (unsubSales) unsubSales();
       unsubAppts();
     };
   }, [user]);
+
+  // Seed 3 default template items once (if catalog is empty)
+  useEffect(() => {
+    if (!user) return;
+    if (seededCatalogTemplatesRef.current) return;
+    if (catalog.length) {
+      seededCatalogTemplatesRef.current = true;
+      return;
+    }
+
+    seededCatalogTemplatesRef.current = true;
+
+    const svgDataUrl = (label: string) => {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="160"><defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#e2e8f0"/><stop offset="1" stop-color="#f8fafc"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#g)"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="Inter, Arial" font-size="26" fill="#0f172a">${label}</text></svg>`;
+      return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
+    };
+
+    void (async () => {
+      try {
+        // NOTE: replace prices/costs if you have the definitive numbers.
+        const seeds: Array<Partial<CatalogItem> & { name: string }> = [
+          { type: 'product', name: 'Plantilla Clásica', salePrice: 950, providerCost: 450, isTemplate: true, active: true, photoDataUrl: svgDataUrl('Clásica') },
+          { type: 'product', name: 'Plantilla Deportiva', salePrice: 1100, providerCost: 550, isTemplate: true, active: true, photoDataUrl: svgDataUrl('Deportiva') },
+          { type: 'product', name: 'Plantilla Diabetes', salePrice: 1300, providerCost: 650, isTemplate: true, active: true, photoDataUrl: svgDataUrl('Diabetes') }
+        ];
+        for (const s of seeds) {
+          await dbService.upsertCatalogItem({
+            ...s,
+            unitPrice: Number((s as any).salePrice || 0),
+            unitCost: Number((s as any).providerCost || 0)
+          } as any);
+        }
+      } catch {
+        // silent: seeding is best-effort
+      }
+    })();
+  }, [user, catalog.length]);
 
   useEffect(() => {
     if (!user) return;
@@ -252,6 +304,157 @@ const App: React.FC = () => {
     return payments.reduce((acc: number, p: any) => acc + (isCardPaymentMethod(p?.method) ? Number(p?.amount || 0) * SALE_MP_FEE_RATE : 0), 0);
   };
 
+  const applyDashboardPreset = (preset: 'quincena' | 'mes' | 'anio') => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+    if (preset === 'anio') {
+      setCobranzaFrom(fmt(new Date(y, 0, 1)));
+      setCobranzaTo(fmt(new Date(y, 11, 31)));
+      return;
+    }
+
+    if (preset === 'mes') {
+      const lastDay = new Date(y, m + 1, 0).getDate();
+      setCobranzaFrom(fmt(new Date(y, m, 1)));
+      setCobranzaTo(fmt(new Date(y, m, lastDay)));
+      return;
+    }
+
+    // quincena actual (1-15 o 16-fin)
+    const day = now.getDate();
+    const lastDay = new Date(y, m + 1, 0).getDate();
+    if (day <= 15) {
+      setCobranzaFrom(fmt(new Date(y, m, 1)));
+      setCobranzaTo(fmt(new Date(y, m, 15)));
+    } else {
+      setCobranzaFrom(fmt(new Date(y, m, 16)));
+      setCobranzaTo(fmt(new Date(y, m, lastDay)));
+    }
+  };
+
+  const dashboardRange = useMemo(() => {
+    const from = cobranzaFrom ? `${cobranzaFrom}T00:00:00.000Z` : '';
+    const to = cobranzaTo ? `${cobranzaTo}T23:59:59.999Z` : '';
+    return { from, to };
+  }, [cobranzaFrom, cobranzaTo]);
+
+  const dashboardSales = useMemo(() => {
+    const { from, to } = dashboardRange;
+    return (sales || []).filter((s) => {
+      const t = String(s.createdAt || '');
+      if (from && t < from) return false;
+      if (to && t > to) return false;
+      return true;
+    });
+  }, [sales, dashboardRange]);
+
+  const dashboardKpis = useMemo(() => {
+    const ventas = dashboardSales.reduce((acc, s) => acc + Number(s.total || 0), 0);
+    const costo = dashboardSales.reduce((acc, s) => acc + Number(s.costTotal || 0), 0);
+    const iva = dashboardSales.reduce((acc, s) => acc + Number(s.iva || 0), 0);
+    const mp = dashboardSales.reduce((acc, s) => acc + saleMpFeeTotal(s), 0);
+    const gananciaNeta = dashboardSales.reduce((acc, s) => acc + (Number(s.total || 0) - Number(s.costTotal || 0) - saleMpFeeTotal(s)), 0);
+
+    const now = new Date();
+    const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const proveedorPendienteMensual = (sales || [])
+      .filter((s) => !s.providerPaid && Number(s.providerDue || 0) > 0 && String((s as any).providerSentAt || '').slice(0, 7) === thisMonth)
+      .reduce((acc, s) => acc + Number(s.providerDue || 0), 0);
+
+    const proveedorPendienteAcumulado = (sales || [])
+      .filter((s) => !s.providerPaid && Number(s.providerDue || 0) > 0)
+      .reduce((acc, s) => acc + Number(s.providerDue || 0), 0);
+
+    const proveedorEnviosMensual = (providerShipments || [])
+      .filter((x) => String(x.date || '').slice(0, 7) === thisMonth)
+      .reduce((acc, x) => acc + Number(x.cost || 0), 0);
+
+    const proveedorVentasMensualTotal = (sales || [])
+      .filter((s) => String((s as any).providerSentAt || '').slice(0, 7) === thisMonth)
+      .reduce((acc, s) => acc + Number((s as any).providerDue || 0), 0);
+
+    const proveedorTotalMensual = proveedorVentasMensualTotal + proveedorEnviosMensual;
+
+    return { ventas, costo, iva, mp, gananciaNeta, proveedorPendienteMensual, proveedorPendienteAcumulado, proveedorEnviosMensual, proveedorVentasMensualTotal, proveedorTotalMensual, proveedorMes: thisMonth };
+  }, [dashboardSales, sales, providerShipments]);
+
+  const [dashboardChartMetric, setDashboardChartMetric] = useState<'ventas' | 'gananciaNeta'>('ventas');
+  const [dashboardChartBucket, setDashboardChartBucket] = useState<'mes' | 'quincena' | 'dia'>('mes');
+
+  const dashboardChartData = useMemo(() => {
+    const getValue = (s: Sale) => {
+      if (dashboardChartMetric === 'ventas') return Number(s.total || 0);
+      return Number(s.total || 0) - Number(s.costTotal || 0) - saleMpFeeTotal(s);
+    };
+
+    const toKey = (iso: string) => {
+      const d = new Date(String(iso || ''));
+      if (!Number.isFinite(d.getTime())) return null;
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      if (dashboardChartBucket === 'dia') return { key: `${y}-${m}-${day}`, label: `${day}/${m}` };
+      if (dashboardChartBucket === 'quincena') {
+        const q = d.getDate() <= 15 ? '1Q' : '2Q';
+        return { key: `${y}-${m}-${q}`, label: `${m}/${String(y).slice(-2)} ${q}` };
+      }
+      return { key: `${y}-${m}`, label: `${m}/${String(y).slice(-2)}` };
+    };
+
+    const agg = new Map<string, { key: string; label: string; total: number }>();
+    for (const s of (dashboardSales || [])) {
+      const k = toKey(String(s.createdAt || ''));
+      if (!k) continue;
+      const row = agg.get(k.key) || { key: k.key, label: k.label, total: 0 };
+      row.total += getValue(s);
+      agg.set(k.key, row);
+    }
+
+    const out = Array.from(agg.values()).sort((a, b) => a.key.localeCompare(b.key));
+    if (dashboardChartBucket === 'dia' && out.length > 31) return out.slice(out.length - 31);
+    return out;
+  }, [dashboardSales, dashboardChartMetric, dashboardChartBucket]);
+
+  const pendingByPatient = useMemo(() => {
+    const by = new Map<string, { patientId?: string; patientName: string; pending: number; salesCount: number }>();
+    for (const s of (sales || [])) {
+      const pending = salePendingTotal(s);
+      if (pending <= 0.009) continue;
+      const key = String(s.patientId || s.patientName || '');
+      const row = by.get(key) || { patientId: s.patientId, patientName: s.patientName || '(Sin nombre)', pending: 0, salesCount: 0 };
+      row.pending += pending;
+      row.salesCount += 1;
+      by.set(key, row);
+    }
+    return Array.from(by.values()).sort((a, b) => b.pending - a.pending);
+  }, [sales]);
+
+  const renewalsNextMonth = useMemo(() => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59, 999);
+    return (sales || [])
+      .filter((s) => {
+        const fu = String((s as any).followUpAt || '');
+        if (!fu) return false;
+        const d = new Date(fu);
+        if (!Number.isFinite(d.getTime())) return false;
+        return d >= start && d <= end;
+      })
+      .sort((a, b) => String((a as any).followUpAt || '').localeCompare(String((b as any).followUpAt || '')));
+  }, [sales]);
+
+  const deliveredPlantillas = useMemo(() => {
+    return (sales || [])
+      .filter((s) => Boolean((s as any).delivered) || Boolean((s as any).deliveryActualAt))
+      .slice()
+      .sort((a, b) => String((b as any).deliveryActualAt || b.createdAt || '').localeCompare(String((a as any).deliveryActualAt || a.createdAt || '')));
+  }, [sales]);
+
   const patientDuplicates = useMemo(() => {
     const normEmail = (v: any) => String(v || '').trim().toLowerCase();
 
@@ -287,7 +490,8 @@ const App: React.FC = () => {
 
   const salePreview = useMemo(() => {
     const itemsSubtotal = (saleDraft.items || []).reduce((acc, it) => acc + Number(it.qty || 0) * Number(it.unitPrice || 0), 0);
-    const shipping = Number(saleDraft.shipping || 0);
+    // Cliente envío: ya no se contabiliza.
+    const shipping = 0;
     const subtotal = Math.max(0, itemsSubtotal + shipping);
     const ivaRate = Number(saleDraft.ivaRate ?? 0.16);
     const iva = Math.max(0, subtotal * ivaRate);
@@ -309,7 +513,7 @@ const App: React.FC = () => {
         : rawU;
       const profile = await loginWithMatricula(mappedU, password.trim());
       setUser(profile);
-      setTab('patients');
+      setTab('dashboard');
       setPassword('');
     } catch (e: any) {
       if (e instanceof AuthError) setError(e.message);
@@ -324,6 +528,7 @@ const App: React.FC = () => {
       setLoading(true);
       await logoutSession();
       setUser(null);
+      setTab('dashboard');
       setMatricula('');
       setPassword('');
     } finally {
@@ -347,15 +552,22 @@ const App: React.FC = () => {
     const name = String(catalogDraft.name || '').trim();
     if (!name) return setUiMessage('Nombre del producto/servicio es requerido.');
     try {
+      const salePrice = Number((catalogDraft as any).salePrice ?? catalogDraft.unitPrice ?? 0);
+      const providerCost = Number((catalogDraft as any).providerCost ?? catalogDraft.unitCost ?? 0);
+
       await dbService.upsertCatalogItem({
         ...catalogDraft,
         name,
-        unitPrice: Number(catalogDraft.unitPrice || 0),
-        unitCost: Number(catalogDraft.unitCost || 0),
+        salePrice,
+        providerCost,
+        unitPrice: salePrice,
+        unitCost: providerCost,
+        photoDataUrl: (catalogDraft as any).photoDataUrl ? String((catalogDraft as any).photoDataUrl) : '',
+        isTemplate: Boolean((catalogDraft as any).isTemplate),
         active: catalogDraft.active !== false,
         type: catalogDraft.type === 'service' ? 'service' : 'product'
       } as any);
-      setCatalogDraft({ type: 'product', active: true });
+      setCatalogDraft({ type: 'product', active: true, isTemplate: false });
       setUiMessage('Guardado.');
       setTimeout(() => setUiMessage(null), 1500);
     } catch (e: any) {
@@ -407,7 +619,7 @@ const App: React.FC = () => {
         providerDue: Number(saleDraft.providerDue || 0),
         providerSentAt: saleDraft.providerSentAt ? String(saleDraft.providerSentAt) : '',
         items: saleDraft.items,
-        shipping: Number(saleDraft.shipping || 0),
+        shipping: 0,
         shippingCost: Number(saleDraft.shippingCost || 0),
         ivaRate: Number(saleDraft.ivaRate ?? 0.16),
         notes: saleDraft.notes
@@ -416,7 +628,7 @@ const App: React.FC = () => {
       // Follow-up: 11 months after estimated delivery
       if (deliveryEstimatedAt) {
         try {
-          const followUpAt = addMonthsIso(deliveryEstimatedAt, 11);
+          const followUpAt = addMonthsIso(deliveryEstimatedAt, 12);
           const resp = await callCalendarWebhook('createFollowUpEvent', {
             saleId: id,
             when: followUpAt,
@@ -710,7 +922,9 @@ const App: React.FC = () => {
           <label className="label">Contraseña</label>
           <div style={{ display: 'flex', gap: 8 }}>
             <input className="input" style={{ flex: 1 }} type={showPassword ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••••" />
-            <button className="btn" onClick={() => setShowPassword((s) => !s)}>{showPassword ? 'Ocultar' : 'Ver'}</button>
+            <button className="btn" aria-label={showPassword ? 'Ocultar contraseña' : 'Ver contraseña'} title={showPassword ? 'Ocultar contraseña' : 'Ver contraseña'} onClick={() => setShowPassword((s) => !s)} style={{ width: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
           </div>
 
           {error ? <div className="errorBox" style={{ marginTop: 12 }}>{error}</div> : null}
@@ -893,8 +1107,9 @@ const App: React.FC = () => {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button className="btn" onClick={() => setShowChangePassword(true)} title="Cambiar contraseña"><KeyRound size={16} />&nbsp;Contraseña</button>
-          <button className="btn" onClick={doLogout}><LogOut size={16} />&nbsp;Salir</button>
+          <button className="btn" onClick={doLogout} aria-label="Salir" title="Salir" style={{ width: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <LogOut size={18} />
+          </button>
         </div>
       </header>
 
@@ -911,7 +1126,108 @@ const App: React.FC = () => {
 
       <main className="content">
         {tab === 'dashboard' ? (
-          <div className="grid2">
+          <div className="dashboardStack">
+            <div className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+                <div>
+                  <h3 style={{ marginTop: 0, marginBottom: 0 }}>Tablero de Control</h3>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                    Periodo: <b>{new Date(cobranzaFrom + 'T00:00:00').toLocaleDateString('es-MX')}</b> – <b>{new Date(cobranzaTo + 'T00:00:00').toLocaleDateString('es-MX')}</b>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button className="btn" style={dashboardPreset === 'quincena' ? { borderColor: 'var(--brand)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--brand) 20%, transparent)' } : undefined} onClick={() => { setDashboardPreset('quincena'); applyDashboardPreset('quincena'); }}>Quincena</button>
+                  <button className="btn" style={dashboardPreset === 'mes' ? { borderColor: 'var(--brand)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--brand) 20%, transparent)' } : undefined} onClick={() => { setDashboardPreset('mes'); applyDashboardPreset('mes'); }}>Mes</button>
+                  <button className="btn" style={dashboardPreset === 'anio' ? { borderColor: 'var(--brand)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--brand) 20%, transparent)' } : undefined} onClick={() => { setDashboardPreset('anio'); applyDashboardPreset('anio'); }}>Año</button>
+                  <button className="btn" style={dashboardPreset === 'rango' ? { borderColor: 'var(--brand)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--brand) 20%, transparent)' } : undefined} onClick={() => setDashboardPreset('rango')}>Rango</button>
+                </div>
+              </div>
+
+              <div style={{ height: 12 }} />
+              <div className="grid3">
+                <div>
+                  <label className="label">Desde</label>
+                  <input className="input" type="date" value={cobranzaFrom} onChange={(e) => { setDashboardPreset('rango'); setCobranzaFrom(e.target.value); }} />
+                </div>
+                <div>
+                  <label className="label">Hasta</label>
+                  <input className="input" type="date" value={cobranzaTo} onChange={(e) => { setDashboardPreset('rango'); setCobranzaTo(e.target.value); }} />
+                </div>
+                <div>
+                  <label className="label">Resumen</label>
+                  <div className="summaryBox">
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Ventas</span><b>{dashboardSales.length}</b></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Cobranza pendiente</span><b>{formatCurrency(dashboardSales.reduce((acc, s) => acc + salePendingTotal(s), 0))}</b></div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ height: 12 }} />
+              <div className="grid4">
+                <div className="statCard">
+                  <div className="muted" style={{ fontSize: 12 }}>Ventas total</div>
+                  <div style={{ fontWeight: 900, fontSize: 18 }}>{formatCurrency(dashboardKpis.ventas)}</div>
+                </div>
+                <div className="statCard">
+                  <div className="muted" style={{ fontSize: 12 }}>Costo proveedor/insumo</div>
+                  <div style={{ fontWeight: 900, fontSize: 18 }}>{formatCurrency(dashboardKpis.costo)}</div>
+                </div>
+                <div className="statCard">
+                  <div className="muted" style={{ fontSize: 12 }}>IVA</div>
+                  <div style={{ fontWeight: 900, fontSize: 18 }}>{formatCurrency(dashboardKpis.iva)}</div>
+                </div>
+                <div className="statCard">
+                  <div className="muted" style={{ fontSize: 12 }}>Ganancia neta (– MP)</div>
+                  <div style={{ fontWeight: 900, fontSize: 18 }}>{formatCurrency(dashboardKpis.gananciaNeta)}</div>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>MP estimado: {formatCurrency(dashboardKpis.mp)}</div>
+                </div>
+              </div>
+
+              <div style={{ height: 12 }} />
+              <div className="summaryBox">
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                  <div><b>Proveedor pendiente ({dashboardKpis.proveedorMes})</b></div>
+                  <div>{formatCurrency(dashboardKpis.proveedorPendienteMensual)}</div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 6 }}>
+                  <div><b>Envíos proveedor ({dashboardKpis.proveedorMes})</b></div>
+                  <div>{formatCurrency((dashboardKpis as any).proveedorEnviosMensual || 0)}</div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 6 }}>
+                  <div><b>Total proveedor ({dashboardKpis.proveedorMes})</b></div>
+                  <div>{formatCurrency((dashboardKpis as any).proveedorTotalMensual || 0)}</div>
+                </div>
+              </div>
+
+              <div style={{ height: 12 }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
+                <div style={{ fontWeight: 800 }}>Gráfica</div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <select className="input" style={{ width: 160 }} value={dashboardChartMetric} onChange={(e) => setDashboardChartMetric(e.target.value as any)}>
+                    <option value="ventas">Ventas</option>
+                    <option value="gananciaNeta">Ganancia neta</option>
+                  </select>
+                  <select className="input" style={{ width: 160 }} value={dashboardChartBucket} onChange={(e) => setDashboardChartBucket(e.target.value as any)}>
+                    <option value="mes">Por mes</option>
+                    <option value="quincena">Por quincena</option>
+                    <option value="dia">Diario</option>
+                  </select>
+                </div>
+              </div>
+              <div style={{ width: '100%', height: 240 }}>
+                <ResponsiveContainer>
+                  <BarChart data={dashboardChartData} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} width={60} />
+                    <Tooltip formatter={(v: any) => formatCurrency(Number(v || 0))} />
+                    <Bar dataKey="total" fill="var(--brand)" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="grid2">
             <div className="card">
               <h3 style={{ marginTop: 0 }}>Pendiente proveedor</h3>
               <div className="muted" style={{ marginTop: -6 }}>Ventas con pago a proveedor pendiente (para confirmar envío/pago).</div>
@@ -953,6 +1269,7 @@ const App: React.FC = () => {
               <div className="muted">Próximas citas (semana actual):</div>
               <div style={{ height: 10 }} />
               {appointments
+                .filter((a) => String(a.status || 'scheduled') !== 'cancelled' && new Date(a.start).getTime() >= (Date.now() - 60_000))
                 .slice()
                 .sort((a, b) => String(a.start).localeCompare(String(b.start)))
                 .slice(0, 10)
@@ -969,7 +1286,7 @@ const App: React.FC = () => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
                 <div>
                   <h3 style={{ marginTop: 0, marginBottom: 0 }}>Cobranza</h3>
-                  <div className="muted" style={{ fontSize: 12 }}>Ventas con saldo pendiente (por periodo de venta).</div>
+
                 </div>
               </div>
 
@@ -977,11 +1294,11 @@ const App: React.FC = () => {
               <div className="grid3">
                 <div>
                   <label className="label">Desde</label>
-                  <input className="input" type="date" value={cobranzaFrom} onChange={(e) => setCobranzaFrom(e.target.value)} />
+                  <input className="input" type="date" value={cobranzaFrom} onChange={(e) => { setDashboardPreset('rango'); setCobranzaFrom(e.target.value); }} />
                 </div>
                 <div>
                   <label className="label">Hasta</label>
-                  <input className="input" type="date" value={cobranzaTo} onChange={(e) => setCobranzaTo(e.target.value)} />
+                  <input className="input" type="date" value={cobranzaTo} onChange={(e) => { setDashboardPreset('rango'); setCobranzaTo(e.target.value); }} />
                 </div>
                 <div>
                   <label className="label">Resumen</label>
@@ -1043,19 +1360,76 @@ const App: React.FC = () => {
             </div>
 
             <div className="card">
+              <h3 style={{ marginTop: 0 }}>Pagos pendientes (por paciente)</h3>
+
+              <div style={{ height: 10 }} />
+              <div className="list" style={{ maxHeight: 360, overflow: 'auto' }}>
+                {pendingByPatient.slice(0, 20).map((r, idx) => (
+                  <div key={idx} className="listRow" style={{ padding: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 800 }}>{r.patientName}</div>
+                      <div className="muted" style={{ fontSize: 12 }}>Ventas con saldo: {r.salesCount}</div>
+                    </div>
+                    <div style={{ fontWeight: 900 }}>{formatCurrency(r.pending)}</div>
+                  </div>
+                ))}
+                {!pendingByPatient.length ? <div className="muted">Sin pendientes.</div> : null}
+              </div>
+            </div>
+
+            <div className="card">
+              <h3 style={{ marginTop: 0 }}>Plantillas entregadas</h3>
+              <div className="muted" style={{ marginTop: -6, fontSize: 12 }}>Últimas ventas marcadas como entregadas.</div>
+              <div style={{ height: 10 }} />
+              <div className="list" style={{ maxHeight: 360, overflow: 'auto' }}>
+                {deliveredPlantillas.slice(0, 15).map((s) => (
+                  <div key={s.id} className="listRow" style={{ padding: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 800 }}>{s.patientName || '(Sin nombre)'} <span className="muted" style={{ fontWeight: 400 }}>· {s.folio}</span></div>
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        {(s as any).deliveryActualAt ? String((s as any).deliveryActualAt).slice(0, 10) : new Date(s.createdAt).toLocaleDateString('es-MX')} · Total {formatCurrency(Number(s.total || 0))}
+                      </div>
+                    </div>
+                    <button className="btn" onClick={() => setSalePrintTarget(s)}>Ver</button>
+                  </div>
+                ))}
+                {!deliveredPlantillas.length ? <div className="muted">Aún no hay entregas.</div> : null}
+              </div>
+            </div>
+
+            <div className="card">
+              <h3 style={{ marginTop: 0 }}>Renovaciones (próximo mes)</h3>
+
+              <div style={{ height: 10 }} />
+              <div className="list" style={{ maxHeight: 360, overflow: 'auto' }}>
+                {renewalsNextMonth.slice(0, 20).map((s) => (
+                  <div key={s.id} className="listRow" style={{ padding: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 800 }}>{s.patientName || '(Sin nombre)'}</div>
+                      <div className="muted" style={{ fontSize: 12 }}>{String((s as any).followUpAt || '').slice(0, 10)} · {s.folio}</div>
+                    </div>
+
+                  </div>
+                ))}
+                {!renewalsNextMonth.length ? <div className="muted">Sin renovaciones programadas para el próximo mes.</div> : null}
+              </div>
+            </div>
+
+            <div className="card">
               <h3 style={{ marginTop: 0 }}>Proveedor mensual</h3>
-              <div className="muted" style={{ marginTop: -6, fontSize: 12 }}>Agrupado por mes de <code>providerSentAt</code> (enviado a proveedor).</div>
+
               <div style={{ height: 10 }} />
               {(() => {
-                const byMonth = new Map<string, { month: string; count: number; total: number; pendingCount: number; pendingTotal: number }>();
+                const byMonth = new Map<string, { month: string; count: number; salesTotal: number; shipmentCost: number; total: number; pendingCount: number; pendingTotal: number }>();
                 for (const s of (sales || [])) {
                   const sentAt = String((s as any).providerSentAt || '').slice(0, 10);
                   if (!sentAt) continue;
                   const month = sentAt.slice(0, 7);
                   const due = Number((s as any).providerDue || 0);
                   const paid = Boolean((s as any).providerPaid);
-                  const row = byMonth.get(month) || { month, count: 0, total: 0, pendingCount: 0, pendingTotal: 0 };
+                  const row = byMonth.get(month) || { month, count: 0, salesTotal: 0, shipmentCost: 0, total: 0, pendingCount: 0, pendingTotal: 0 };
                   row.count += 1;
+                  row.salesTotal += due;
                   row.total += due;
                   if (!paid && due > 0) {
                     row.pendingCount += 1;
@@ -1063,6 +1437,16 @@ const App: React.FC = () => {
                   }
                   byMonth.set(month, row);
                 }
+
+                for (const sh of (providerShipments || [])) {
+                  const month = String(sh.date || '').slice(0, 7);
+                  if (!month) continue;
+                  const row = byMonth.get(month) || { month, count: 0, salesTotal: 0, shipmentCost: 0, total: 0, pendingCount: 0, pendingTotal: 0 };
+                  row.shipmentCost += Number(sh.cost || 0);
+                  row.total += Number(sh.cost || 0);
+                  byMonth.set(month, row);
+                }
+
                 const rows = Array.from(byMonth.values()).sort((a, b) => String(b.month).localeCompare(String(a.month)));
                 return (
                   <div className="list">
@@ -1071,16 +1455,80 @@ const App: React.FC = () => {
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: 800 }}>{r.month}</div>
                           <div className="muted" style={{ fontSize: 12 }}>
-                            Ventas: {r.count} · Total proveedor: <b>{formatCurrency(r.total)}</b> · Pendiente: <b>{formatCurrency(r.pendingTotal)}</b> ({r.pendingCount})
+                            Ventas: {r.count} · Proveedor ventas: <b>{formatCurrency(r.salesTotal)}</b> · Envíos: <b>{formatCurrency(r.shipmentCost)}</b> · Total proveedor: <b>{formatCurrency(r.total)}</b> · Pendiente: <b>{formatCurrency(r.pendingTotal)}</b> ({r.pendingCount})
                           </div>
                         </div>
                       </div>
                     ))}
-                    {!rows.length ? <div className="muted">Aún no hay registros con providerSentAt.</div> : null}
+                    {!rows.length ? <div className="muted">Aún no hay registros.</div> : null}
                   </div>
                 );
               })()}
             </div>
+
+            <div className="card">
+              <h3 style={{ marginTop: 0 }}>Envíos proveedor</h3>
+              <div className="muted" style={{ marginTop: -6 }}>Gasto mensual de envío/paquetería hacia el proveedor.</div>
+
+              <div style={{ height: 10 }} />
+              <div className="grid3">
+                <div>
+                  <label className="label">Fecha</label>
+                  <input className="input" type="date" value={String(providerShipmentDraft.date || '')} onChange={(e) => setProviderShipmentDraft((s) => ({ ...s, date: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="label">Costo</label>
+                  <input className="input" type="number" value={Number(providerShipmentDraft.cost ?? 348)} onChange={(e) => setProviderShipmentDraft((s) => ({ ...s, cost: Number(e.target.value) }))} />
+                </div>
+                <div>
+                  <label className="label">Notas</label>
+                  <input className="input" value={String(providerShipmentDraft.notes || '')} onChange={(e) => setProviderShipmentDraft((s) => ({ ...s, notes: e.target.value }))} placeholder="Opcional" />
+                </div>
+              </div>
+
+              <div style={{ height: 10 }} />
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="btnPrimary" onClick={async () => {
+                  const date = String(providerShipmentDraft.date || '').slice(0, 10);
+                  if (!date) return;
+                  await dbService.upsertProviderShipment({
+                    id: providerShipmentDraft.id as any,
+                    date,
+                    cost: Number(providerShipmentDraft.cost ?? 348),
+                    notes: String(providerShipmentDraft.notes || '')
+                  } as any);
+                  setProviderShipmentDraft({ date: new Date().toISOString().slice(0, 10), cost: 348, notes: '' });
+                  setUiMessage('Envío guardado.');
+                  setTimeout(() => setUiMessage(null), 2000);
+                }}>{providerShipmentDraft.id ? 'Actualizar envío' : 'Agregar envío'}</button>
+                {providerShipmentDraft.id ? (
+                  <button className="btn" onClick={() => setProviderShipmentDraft({ date: new Date().toISOString().slice(0, 10), cost: 348, notes: '' })}>Cancelar</button>
+                ) : null}
+              </div>
+
+              <div style={{ height: 12 }} />
+              <div className="list" style={{ maxHeight: 320, overflow: 'auto' }}>
+                {providerShipments.slice().sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).slice(0, 40).map((sh) => (
+                  <div key={sh.id} className="listRow" style={{ padding: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 800 }}>{String(sh.date || '').slice(0, 10)} <span className="muted" style={{ fontWeight: 400 }}>· {formatCurrency(Number(sh.cost || 0))}</span></div>
+                      {sh.notes ? <div className="muted" style={{ fontSize: 12 }}>{sh.notes}</div> : null}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button className="btn" onClick={() => setProviderShipmentDraft(sh)}>Editar</button>
+                      <button className="btnDanger" onClick={async () => {
+                        if (!confirm('¿Eliminar este envío?')) return;
+                        await dbService.deleteProviderShipment(sh.id);
+                        setUiMessage('Envío eliminado.');
+                        setTimeout(() => setUiMessage(null), 2000);
+                      }}>Eliminar</button>
+                    </div>
+                  </div>
+                ))}
+                {!providerShipments.length ? <div className="muted">Sin envíos registrados.</div> : null}
+              </div>
+            </div>
+          </div>
           </div>
         ) : null}
 
@@ -1290,8 +1738,8 @@ const App: React.FC = () => {
                           catalogItemId: id || undefined,
                           name: item?.name || '',
                           qty: Number(items[idx]?.qty || 1),
-                          unitPrice: Number(item?.unitPrice || 0),
-                          unitCost: Number(item?.unitCost || 0)
+                          unitPrice: Number((item as any)?.salePrice ?? item?.unitPrice ?? 0),
+                          unitCost: Number((item as any)?.providerCost ?? item?.unitCost ?? 0)
                         };
                         return { ...s, items };
                       });
@@ -1343,10 +1791,6 @@ const App: React.FC = () => {
               <div style={{ height: 12 }} />
               <div className="grid3">
                 <div>
-                  <label className="label">Envío (pre-IVA)</label>
-                  <input className="input" type="number" value={saleDraft.shipping} onChange={(e) => setSaleDraft((s) => ({ ...s, shipping: Number(e.target.value) }))} />
-                </div>
-                <div>
                   <label className="label">IVA</label>
                   <select className="input" value={String(saleDraft.ivaRate)} onChange={(e) => setSaleDraft((s) => ({ ...s, ivaRate: Number(e.target.value) }))}>
                     <option value="0.16">16%</option>
@@ -1363,6 +1807,7 @@ const App: React.FC = () => {
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Utilidad</span><b>{formatCurrency(salePreview.profit)}</b></div>
                   </div>
                 </div>
+                <div />
               </div>
 
               <div style={{ height: 12 }} />
@@ -1379,7 +1824,7 @@ const App: React.FC = () => {
                 <div>
                   <label className="label">Pago a proveedor (pendiente)</label>
                   <input className="input" type="number" value={saleDraft.providerDue ?? 0} onChange={(e) => setSaleDraft((s) => ({ ...s, providerDue: Number(e.target.value) }))} />
-                  <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>Si es 0, no aparece como pendiente en Tablero.</div>
+
                 </div>
               </div>
 
@@ -1425,13 +1870,14 @@ const App: React.FC = () => {
                   <label className="label">Nombre</label>
                   <input className="input" value={catalogDraft.name || ''} onChange={(e) => setCatalogDraft((s) => ({ ...s, name: e.target.value }))} />
                 </div>
+
                 <div>
                   <label className="label">Precio (pre-IVA)</label>
-                  <input className="input" type="number" value={catalogDraft.unitPrice ?? 0} onChange={(e) => setCatalogDraft((s) => ({ ...s, unitPrice: Number(e.target.value) }))} />
+                  <input className="input" type="number" value={Number((catalogDraft as any).salePrice ?? catalogDraft.unitPrice ?? 0)} onChange={(e) => setCatalogDraft((s) => ({ ...s, salePrice: Number(e.target.value), unitPrice: Number(e.target.value) }))} />
                 </div>
                 <div>
-                  <label className="label">Costo</label>
-                  <input className="input" type="number" value={catalogDraft.unitCost ?? 0} onChange={(e) => setCatalogDraft((s) => ({ ...s, unitCost: Number(e.target.value) }))} />
+                  <label className="label">Costo proveedor</label>
+                  <input className="input" type="number" value={Number((catalogDraft as any).providerCost ?? catalogDraft.unitCost ?? 0)} onChange={(e) => setCatalogDraft((s) => ({ ...s, providerCost: Number(e.target.value), unitCost: Number(e.target.value) }))} />
                 </div>
                 <div>
                   <label className="label">Activo</label>
@@ -1439,6 +1885,34 @@ const App: React.FC = () => {
                     <option value="1">Sí</option>
                     <option value="0">No</option>
                   </select>
+                </div>
+
+                <div>
+                  <label className="label">Plantilla (template)</label>
+                  <select className="input" value={Boolean((catalogDraft as any).isTemplate) ? '1' : '0'} onChange={(e) => setCatalogDraft((s) => ({ ...s, isTemplate: e.target.value === '1' }))}>
+                    <option value="0">No</option>
+                    <option value="1">Sí</option>
+                  </select>
+                </div>
+
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label className="label">Foto (opcional)</label>
+                  <input className="input" type="file" accept="image/*" onChange={(e) => {
+                    const f = (e.target.files || [])[0];
+                    if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const dataUrl = String(reader.result || '');
+                      setCatalogDraft((s) => ({ ...s, photoDataUrl: dataUrl }));
+                    };
+                    reader.readAsDataURL(f);
+                  }} />
+                  {(catalogDraft as any).photoDataUrl ? (
+                    <div style={{ marginTop: 8, display: 'flex', gap: 10, alignItems: 'center' }}>
+                      <img src={String((catalogDraft as any).photoDataUrl)} alt="Foto" style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 10, border: '1px solid #e5e7eb' }} />
+                      <button className="btnDanger" onClick={() => setCatalogDraft((s) => ({ ...s, photoDataUrl: '' }))}>Quitar foto</button>
+                    </div>
+                  ) : null}
                 </div>
               </div>
               <div style={{ height: 10 }} />
@@ -1448,9 +1922,22 @@ const App: React.FC = () => {
               <div className="list">
                 {catalog.map((c) => (
                   <div key={c.id} className="listRow">
-                    <div>
-                      <div style={{ fontWeight: 600 }}>{c.name} {c.active === false ? <span className="pill">Inactivo</span> : null}</div>
-                      <div className="muted" style={{ fontSize: 12 }}>{c.type} · Precio: {formatCurrency(c.unitPrice)} · Costo: {formatCurrency(c.unitCost)}</div>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                      {(c as any).photoDataUrl ? (
+                        <img src={String((c as any).photoDataUrl)} alt="Foto" style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 10, border: '1px solid #e5e7eb' }} />
+                      ) : (
+                        <div style={{ width: 44, height: 44, borderRadius: 10, border: '1px solid #e5e7eb', background: '#f8fafc' }} />
+                      )}
+                      <div>
+                        <div style={{ fontWeight: 600 }}>
+                          {c.name}
+                          {Boolean((c as any).isTemplate) ? <span className="pill" style={{ marginLeft: 8 }}>Template</span> : null}
+                          {c.active === false ? <span className="pill" style={{ marginLeft: 8 }}>Inactivo</span> : null}
+                        </div>
+                        <div className="muted" style={{ fontSize: 12 }}>
+                          {c.type} · Precio: {formatCurrency(Number((c as any).salePrice ?? c.unitPrice ?? 0))} · Costo: {formatCurrency(Number((c as any).providerCost ?? c.unitCost ?? 0))}
+                        </div>
+                      </div>
                     </div>
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button className="btn" onClick={() => setCatalogDraft(c)}>Editar</button>
@@ -1772,7 +2259,9 @@ const App: React.FC = () => {
             <label className="label">Nueva</label>
             <div style={{ display: 'flex', gap: 8 }}>
               <input className="input" style={{ flex: 1 }} type={cpShowNew ? 'text' : 'password'} value={cpNew} onChange={(e) => setCpNew(e.target.value)} />
-              <button className="btn" onClick={() => setCpShowNew((s) => !s)}>{cpShowNew ? 'Ocultar' : 'Ver'}</button>
+              <button className="btn" aria-label={cpShowNew ? 'Ocultar contraseña' : 'Ver contraseña'} title={cpShowNew ? 'Ocultar contraseña' : 'Ver contraseña'} onClick={() => setCpShowNew((s) => !s)} style={{ width: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {cpShowNew ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
             </div>
             <div style={{ height: 14 }} />
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
