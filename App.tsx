@@ -1170,8 +1170,9 @@ const App: React.FC = () => {
                   <div style={{ fontWeight: 900, fontSize: 18 }}>{formatCurrency(dashboardKpis.costo)}</div>
                 </div>
                 <div className="statCard">
-                  <div className="muted" style={{ fontSize: 12 }}>IVA</div>
+                  <div className="muted" style={{ fontSize: 12 }}>IVA cobrado</div>
                   <div style={{ fontWeight: 900, fontSize: 18 }}>{formatCurrency(dashboardKpis.iva)}</div>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>IVA por pagar: {formatCurrency(dashboardKpis.iva)}</div>
                 </div>
                 <div className="statCard">
                   <div className="muted" style={{ fontSize: 12 }}>Ganancia neta (– MP)</div>
