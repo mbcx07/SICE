@@ -1379,7 +1379,8 @@ export const dbService = {
     const iva = Math.max(0, subtotal * ivaRate);
     const total = subtotal + iva;
     const costTotal = itemsCost + Math.max(0, shippingCost);
-    const profit = total - costTotal;
+    // Profit should not include IVA (tax).
+    const profit = subtotal - costTotal;
 
     const counterRef = doc(db, 'counters', `sales-${year}`);
 

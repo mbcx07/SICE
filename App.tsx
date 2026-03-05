@@ -352,7 +352,8 @@ const App: React.FC = () => {
     const costo = dashboardSales.reduce((acc, s) => acc + Number(s.costTotal || 0), 0);
     const iva = dashboardSales.reduce((acc, s) => acc + Number(s.iva || 0), 0);
     const mp = dashboardSales.reduce((acc, s) => acc + saleMpFeeTotal(s), 0);
-    const gananciaNeta = dashboardSales.reduce((acc, s) => acc + (Number(s.total || 0) - Number(s.costTotal || 0) - saleMpFeeTotal(s)), 0);
+    // Ganancia neta: usa SUBTOTAL (sin IVA) para que el IVA no infle la utilidad.
+    const gananciaNeta = dashboardSales.reduce((acc, s) => acc + (Number((s as any).subtotal || 0) - Number(s.costTotal || 0) - saleMpFeeTotal(s)), 0);
 
     const now = new Date();
     const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -383,7 +384,7 @@ const App: React.FC = () => {
   const dashboardChartData = useMemo(() => {
     const getValue = (s: Sale) => {
       if (dashboardChartMetric === 'ventas') return Number(s.total || 0);
-      return Number(s.total || 0) - Number(s.costTotal || 0) - saleMpFeeTotal(s);
+      return Number((s as any).subtotal || 0) - Number(s.costTotal || 0) - saleMpFeeTotal(s);
     };
 
     const toKey = (iso: string) => {
@@ -493,7 +494,8 @@ const App: React.FC = () => {
     const total = subtotal + iva;
     const itemsCost = (saleDraft.items || []).reduce((acc, it) => acc + Number(it.qty || 0) * Number(it.unitCost || 0), 0);
     const costTotal = itemsCost + Math.max(0, Number(saleDraft.shippingCost || 0));
-    const profit = total - costTotal;
+    // Utilidad sin IVA
+    const profit = subtotal - costTotal;
     return { itemsSubtotal, subtotal, iva, total, costTotal, profit };
   }, [saleDraft]);
 
