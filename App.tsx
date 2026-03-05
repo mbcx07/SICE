@@ -219,42 +219,37 @@ const App: React.FC = () => {
     };
   }, [user]);
 
-  // Seed 3 default template items once (if catalog is empty)
+  // Ensure 3 template items exist with correct cost/price + images.
   useEffect(() => {
     if (!user) return;
     if (seededCatalogTemplatesRef.current) return;
-    if (catalog.length) {
-      seededCatalogTemplatesRef.current = true;
-      return;
-    }
 
     seededCatalogTemplatesRef.current = true;
 
-    const svgDataUrl = (label: string) => {
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="160"><defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#e2e8f0"/><stop offset="1" stop-color="#f8fafc"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#g)"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="Inter, Arial" font-size="26" fill="#0f172a">${label}</text></svg>`;
-      return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
-    };
+    const base = `${(import.meta as any).env?.BASE_URL || '/'}`.replace(/\/+$/, '/');
 
     void (async () => {
       try {
-        // NOTE: replace prices/costs if you have the definitive numbers.
         const seeds: Array<Partial<CatalogItem> & { name: string }> = [
-          { type: 'product', name: 'Plantilla Clásica', salePrice: 950, providerCost: 450, isTemplate: true, active: true, photoDataUrl: svgDataUrl('Clásica') },
-          { type: 'product', name: 'Plantilla Deportiva', salePrice: 1100, providerCost: 550, isTemplate: true, active: true, photoDataUrl: svgDataUrl('Deportiva') },
-          { type: 'product', name: 'Plantilla Diabetes', salePrice: 1300, providerCost: 650, isTemplate: true, active: true, photoDataUrl: svgDataUrl('Diabetes') }
+          { type: 'product', name: 'Plantilla Clásica', salePrice: 2600, providerCost: 1184, isTemplate: true, active: true, photoDataUrl: `${base}catalog/plantilla-clasica.jpg` },
+          { type: 'product', name: 'Plantilla Deportiva', salePrice: 2600, providerCost: 1184, isTemplate: true, active: true, photoDataUrl: `${base}catalog/plantilla-deportiva.jpg` },
+          { type: 'product', name: 'Plantilla Diabetes', salePrice: 2800, providerCost: 1408, isTemplate: true, active: true, photoDataUrl: `${base}catalog/plantilla-diabetes.jpg` }
         ];
+
         for (const s of seeds) {
+          const existing = catalog.find((c) => String(c.name || '').trim().toLowerCase() === String(s.name).toLowerCase());
           await dbService.upsertCatalogItem({
             ...s,
+            id: existing?.id,
             unitPrice: Number((s as any).salePrice || 0),
             unitCost: Number((s as any).providerCost || 0)
           } as any);
         }
       } catch {
-        // silent: seeding is best-effort
+        // silent
       }
     })();
-  }, [user, catalog.length]);
+  }, [user, catalog]);
 
   useEffect(() => {
     if (!user) return;
