@@ -1246,7 +1246,7 @@ export const dbService = {
       cost: Number(sh.cost ?? 348),
       notes: sh.notes ? String(sh.notes) : '',
       updatedAt: nowIso(),
-      createdBy: user.uid
+      createdBy: (user as any).uid || (user as any).id
     };
 
     if (sh.id) {
