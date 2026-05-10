@@ -1,7 +1,5 @@
-import { initializeApp } from "firebase/app";
-import { getFunctions, httpsCallable } from "firebase/functions";
+import { httpsCallable } from "firebase/functions";
 import {
-  getFirestore,
   collection,
   addDoc,
   getDocs,
@@ -20,38 +18,23 @@ import {
   serverTimestamp
 } from "firebase/firestore";
 import {
-  getAuth,
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
   createUserWithEmailAndPassword,
   setPersistence,
   inMemoryPersistence,
-  browserSessionPersistence,
   EmailAuthProvider,
   reauthenticateWithCredential,
   updatePassword
 } from "firebase/auth";
-import { Tramite, Bitacora, Role, User, EstatusWorkflow, TipoBeneficiario, Patient, CatalogItem, ProviderShipment, Sale, Appointment, SiceSettings, SaleLineItem, IntakeRequest } from '../types';
+import { initializeApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
+import { db, auth, app, functions, authPersistenceReady, AuthError } from './firebase';
+export { AuthError };
+import { Tramite, Bitacora, Role, User, EstatusWorkflow, TipoBeneficiario } from '../types';
 import { validateWorkflowTransition } from './workflow';
-
-const firebaseConfig = {
-  apiKey: "AIzaSyB7OrbWe3_dksWgIqDijPzoF4EgltekJHU",
-  authDomain: "sice-23295.firebaseapp.com",
-  projectId: "sice-23295",
-  storageBucket: "sice-23295.firebasestorage.app",
-  messagingSenderId: "298295905546",
-  appId: "1:298295905546:web:eaba5d4d4dbc27a82afef3",
-  measurementId: "G-THF2K8Y3ZN"
-};
-
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
-const functions = getFunctions(app);
-const authPersistenceReady = setPersistence(auth, browserSessionPersistence).catch((error) => {
-  console.warn('No se pudo establecer persistencia de sesion en navegador.', error);
-});
+import { siceService } from './sice';
 
 const AUTH_EMAIL_DOMAIN = (import.meta as any).env?.VITE_AUTH_EMAIL_DOMAIN || 'diagnostic-support.local';
 
@@ -124,7 +107,6 @@ const parseMoneyLike = (value: any): number => {
   const raw = String(value ?? '').trim();
   if (!raw) return 0;
   const cleaned = raw.replace(/[^\d.,-]/g, '');
-  // soporta "1,234.56" y "1.234,56"
   const normalized = cleaned.includes(',') && cleaned.includes('.')
     ? (cleaned.lastIndexOf(',') > cleaned.lastIndexOf('.')
       ? cleaned.replace(/\./g, '').replace(',', '.')
@@ -170,10 +152,10 @@ const resolveTramiteImporte = (t: any): number => {
   candidates.sort((a, b) => b - a);
   return candidates[0] || 0;
 };
+
 const PRIMARY_ADMIN_MATRICULA = '99032103';
 const MATRICULA_EMAIL_OVERRIDES: Record<string, string> = {
   '99032103': 'moises.beltran@imss.gob.mx',
-  // SICE: allow simple usernames
   'LUISANA': 'dgnstcspprtdlnrst@gmail.com',
 };
 const MATRICULA_EMAIL_ALIASES: Record<string, string[]> = {
@@ -197,7 +179,15 @@ const nowIso = () => new Date().toISOString();
 const getCreatorAuth = async () => {
   if (!creatorAuthPromise) {
     creatorAuthPromise = (async () => {
-      const secondary = initializeApp(firebaseConfig, 'sistra-user-creator');
+      const secondary = initializeApp({
+        apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+        authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+        projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+        storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+        messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+        appId: import.meta.env.VITE_FIREBASE_APP_ID,
+        measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
+      }, 'sistra-user-creator');
       const secondaryAuth = getAuth(secondary);
       await setPersistence(secondaryAuth, inMemoryPersistence);
       return secondaryAuth;
@@ -237,7 +227,6 @@ const bootstrapPrimaryAdminProfile = async (uid: string, matricula: string, emai
 
 const bootstrapSiceUserProfile = async (uid: string, matriculaLike: string, email: string) => {
   const normalized = normalizeMatricula(matriculaLike || '');
-  // SICE: allow a small set of simple usernames to bootstrap into usuarios/{uid}
   const allowed = new Set(['LUISANA', 'DGNS', 'DIAGNOSTIC', 'ADMIN']);
   const isAllowed = allowed.has(normalized) || email.toLowerCase() === 'dgnstcspprtdlnrst@gmail.com';
   if (!isAllowed) return;
@@ -331,19 +320,6 @@ export const validateNuevoTramiteInput = (payload: {
   return issues;
 };
 
-export class AuthError extends Error {
-  code: 'INVALID_CREDENTIALS' | 'INACTIVE_USER' | 'INVALID_INPUT' | 'WEAK_PASSWORD' | 'UNAUTHORIZED' | 'INVALID_SESSION';
-
-  constructor(
-    code: 'INVALID_CREDENTIALS' | 'INACTIVE_USER' | 'INVALID_INPUT' | 'WEAK_PASSWORD' | 'UNAUTHORIZED' | 'INVALID_SESSION',
-    message: string
-  ) {
-    super(message);
-    this.name = 'AuthError';
-    this.code = code;
-  }
-}
-
 const clearSession = () => {
   currentUserProfile = null;
 };
@@ -417,7 +393,6 @@ export const ensureSession = async (): Promise<User | null> => {
 
     let userDoc = await getDoc(doc(db, 'usuarios', firebaseUser.uid));
     if (!userDoc.exists()) {
-      // SICE bootstrap: if the authenticated user is allowed, create profile automatically.
       const email = String(firebaseUser.email || '');
       await bootstrapSiceUserProfile(firebaseUser.uid, email.split('@')[0] || 'USER', email);
       userDoc = await getDoc(doc(db, 'usuarios', firebaseUser.uid));
@@ -455,7 +430,6 @@ export const loginWithMatricula = async (matricula: string, password: string): P
   try {
     await authPersistenceReady;
 
-    // If the user typed an email, use it directly.
     const candidates = rawUser.includes('@')
       ? [rawUser]
       : matriculaToEmailCandidates(matriculaNormalized);
@@ -630,6 +604,10 @@ export const changeOwnPassword = async (
 };
 
 export const dbService = {
+  // =====================
+  // Presupuesto Global
+  // =====================
+
   async getPresupuestoGlobal(): Promise<number | null> {
     try {
       const cfgDoc = await getDoc(doc(db, 'configuracion', 'global'));
@@ -663,7 +641,6 @@ export const dbService = {
     const unsub = onSnapshot(q, (snap) => {
       const map = (snap.docs || []).reduce((acc: Record<string, { totalSolicitudes: number; totalCosto: number }>, d) => {
         const t: any = d.data() || {};
-        // Mantener coherencia con listados: ignorar documentos incompletos/huérfanos
         if (!String(t?.folio || '').trim()) return acc;
         if (!String(t?.fechaCreacion || '').trim()) return acc;
         if (t?.eliminado === true) return acc;
@@ -751,6 +728,10 @@ export const dbService = {
     }, { merge: true });
   },
 
+  // =====================
+  // Users
+  // =====================
+
   async getUsers(): Promise<User[]> {
     const q = query(collection(db, 'usuarios'), orderBy('nombre', 'asc'));
     const querySnapshot = await getDocs(q);
@@ -767,6 +748,10 @@ export const dbService = {
     if (adminUser.id === userId) throw new Error('No puedes eliminar tu propio usuario administrador.');
     await deleteDoc(doc(db, 'usuarios', userId));
   },
+
+  // =====================
+  // Tramites
+  // =====================
 
   async getTramites(): Promise<Tramite[]> {
     try {
@@ -1002,6 +987,10 @@ export const dbService = {
     }, { merge: true });
   },
 
+  // =====================
+  // Bitacora
+  // =====================
+
   async getBitacora(tramiteId: string): Promise<Bitacora[]> {
     try {
       const q = query(
@@ -1033,470 +1022,59 @@ export const dbService = {
   },
 
   // =====================
-  // SICE (MVP) services
+  // SICE delegates (backward compat)
   // =====================
 
-  async getSiceSettings(): Promise<SiceSettings> {
-    const ref = doc(db, 'siceSettings', 'global');
-    const snap = await getDoc(ref);
-    if (!snap.exists()) {
-      return { id: 'global', themeColor: '#0ea5e9' };
-    }
-    const data: any = snap.data() || {};
-    return {
-      id: 'global',
-      themeColor: String(data.themeColor || '#0ea5e9'),
-      logoDataUrl: data.logoDataUrl ? String(data.logoDataUrl) : undefined,
-      updatedAt: data.updatedAt ? String(data.updatedAt) : undefined,
-      updatedBy: data.updatedBy ? String(data.updatedBy) : undefined
-    };
-  },
+  getSiceSettings: siceService.getSiceSettings.bind(siceService),
+  updateSiceSettings: siceService.updateSiceSettings.bind(siceService),
+  watchSiceSettings: siceService.watchSiceSettings.bind(siceService),
 
-  async updateSiceSettings(patch: Partial<SiceSettings>): Promise<void> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-    await setDoc(doc(db, 'siceSettings', 'global'), {
-      ...patch,
-      updatedAt: nowIso(),
-      updatedBy: (user as any).uid || (user as any).id
-    }, { merge: true });
-  },
+  createIntake: siceService.createIntake.bind(siceService),
+  watchIntakes: siceService.watchIntakes.bind(siceService),
+  updateIntake: siceService.updateIntake.bind(siceService),
+  deleteIntake: siceService.deleteIntake.bind(siceService),
+  markIntakeApproved: siceService.markIntakeApproved.bind(siceService),
+  markIntakeRejected: siceService.markIntakeRejected.bind(siceService),
+  createOrUpdatePatientFromIntake: siceService.createOrUpdatePatientFromIntake.bind(siceService),
 
-  watchSiceSettings(onValue: (settings: SiceSettings) => void): () => void {
-    const ref = doc(db, 'siceSettings', 'global');
-    const unsub = onSnapshot(ref, (snap) => {
-      if (!snap.exists()) {
-        onValue({ id: 'global', themeColor: '#2b5ea7', calendarInvitePatient: true });
-        return;
-      }
-      const d: any = snap.data() || {};
-      onValue({
-        id: 'global',
-        themeColor: String(d.themeColor || '#2b5ea7'),
-        logoDataUrl: d.logoDataUrl ? String(d.logoDataUrl) : undefined,
-        calendarWebhookUrl: d.calendarWebhookUrl ? String(d.calendarWebhookUrl) : undefined,
-        calendarWebhookSecret: d.calendarWebhookSecret ? String(d.calendarWebhookSecret) : undefined,
-        calendarInvitePatient: d.calendarInvitePatient === false ? false : true,
-        updatedAt: d.updatedAt ? String(d.updatedAt) : undefined,
-        updatedBy: d.updatedBy ? String(d.updatedBy) : undefined
-      });
+  listCatalogItems: siceService.listCatalogItems.bind(siceService),
+  watchCatalogItems: siceService.watchCatalogItems.bind(siceService),
+  upsertCatalogItem: siceService.upsertCatalogItem.bind(siceService),
+  deleteCatalogItem: siceService.deleteCatalogItem.bind(siceService),
+
+  watchProviderShipments: siceService.watchProviderShipments.bind(siceService),
+  upsertProviderShipment: siceService.upsertProviderShipment.bind(siceService),
+  deleteProviderShipment: siceService.deleteProviderShipment.bind(siceService),
+
+  watchPatients: siceService.watchPatients.bind(siceService),
+  upsertPatient: siceService.upsertPatient.bind(siceService),
+  deletePatient: siceService.deletePatient.bind(siceService),
+
+  watchSalesByPatient: siceService.watchSalesByPatient.bind(siceService),
+  watchSales: siceService.watchSales.bind(siceService),
+  createSale: siceService.createSale.bind(siceService),
+  updateSale: siceService.updateSale.bind(siceService),
+  deleteSale: siceService.deleteSale.bind(siceService),
+
+  watchAppointments: siceService.watchAppointments.bind(siceService),
+  upsertAppointment: siceService.upsertAppointment.bind(siceService),
+  updateAppointment: siceService.updateAppointment.bind(siceService),
+  deleteAppointment: siceService.deleteAppointment.bind(siceService),
+
+  callCalendarWebhook: async (webhookUrl: string, webhookSecret: string, appointmentId: string): Promise<any> => {
+    const url = String(webhookUrl || '').trim();
+    const secret = String(webhookSecret || '').trim();
+    if (!url || !secret) return null;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ secret, action: 'createAppointmentEvent', payload: { appointmentId } })
     });
-    return () => unsub();
-  },
-
-  // Public intake (no auth required)
-  async createIntake(input: { fullName: string; phone: string; email: string; residence: string }): Promise<string> {
-    const payload: any = {
-      fullName: String(input.fullName || '').trim(),
-      phone: String(input.phone || '').trim(),
-      email: String(input.email || '').trim(),
-      residence: String(input.residence || '').trim(),
-      status: 'new',
-      createdAt: serverTimestamp()
-    };
-    const ref = await addDoc(collection(db, 'intakes'), payload);
-    return ref.id;
-  },
-
-  // (owner) view intake
-  watchIntakes(onValue: (items: IntakeRequest[]) => void): () => void {
-    const q = query(collection(db, 'intakes'), orderBy('createdAt', 'desc'), limit(200));
-    const unsub = onSnapshot(q, (snap) => {
-      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as IntakeRequest[];
-      onValue(items);
-    }, () => onValue([]));
-    return () => unsub();
-  },
-
-  async updateIntake(id: string, patch: Partial<IntakeRequest>): Promise<void> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-    await updateDoc(doc(db, 'intakes', id), { ...patch } as any);
-  },
-
-  async deleteIntake(id: string): Promise<void> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-    await deleteDoc(doc(db, 'intakes', id));
-  },
-
-  async markIntakeApproved(id: string): Promise<void> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-    await updateDoc(doc(db, 'intakes', id), { status: 'approved', approvedAt: serverTimestamp() } as any);
-  },
-
-  async markIntakeRejected(id: string): Promise<void> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-    await updateDoc(doc(db, 'intakes', id), { status: 'rejected', approvedAt: serverTimestamp() } as any);
-  },
-
-  async createOrUpdatePatientFromIntake(input: { fullName: string; phone: string; email: string; residence: string }): Promise<string> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-
-    const name = String(input.fullName || '').trim();
-    const phone = String(input.phone || '').trim();
-    const email = String(input.email || '').trim();
-    const residence = String(input.residence || '').trim();
-
-    // Try match by phone first
-    if (phone) {
-      const qPhone = query(collection(db, 'patients'), where('phone', '==', phone), limit(1));
-      const snap = await getDocs(qPhone);
-      if (!snap.empty) {
-        const d = snap.docs[0];
-        await setDoc(doc(db, 'patients', d.id), { name, phone, email, notesGeneral: `Residencia: ${residence}`, updatedAt: nowIso() } as any, { merge: true });
-        return d.id;
-      }
+    const data: any = await res.json().catch(() => ({}));
+    if (!res.ok || data?.ok === false) {
+      const msg = data?.error || `Webhook error (${res.status})`;
+      throw new Error(msg);
     }
-
-    // Then match by email
-    if (email) {
-      const qEmail = query(collection(db, 'patients'), where('email', '==', email), limit(1));
-      const snap = await getDocs(qEmail);
-      if (!snap.empty) {
-        const d = snap.docs[0];
-        await setDoc(doc(db, 'patients', d.id), { name, phone, email, notesGeneral: `Residencia: ${residence}`, updatedAt: nowIso() } as any, { merge: true });
-        return d.id;
-      }
-    }
-
-    // Otherwise create a new patient
-    const newId = await this.upsertPatient({ name, phone, email, notesGeneral: `Residencia: ${residence}` } as any);
-    return newId;
+    return data;
   },
-
-  // Catalog
-  async listCatalogItems(): Promise<CatalogItem[]> {
-    const q = query(collection(db, 'catalogItems'), orderBy('name', 'asc'), limit(2000));
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as CatalogItem[];
-  },
-
-  watchCatalogItems(onValue: (items: CatalogItem[]) => void): () => void {
-    const q = query(collection(db, 'catalogItems'), orderBy('name', 'asc'), limit(2000));
-    const unsub = onSnapshot(q, (snap) => {
-      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as CatalogItem[];
-      onValue(items);
-    }, () => onValue([]));
-    return () => unsub();
-  },
-
-  async upsertCatalogItem(item: Partial<CatalogItem> & { name: string }): Promise<string> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-
-    const salePrice = Number((item as any).salePrice ?? item.unitPrice ?? 0);
-    const providerCost = Number((item as any).providerCost ?? item.unitCost ?? 0);
-
-    const payload: any = {
-      type: (item.type === 'service' ? 'service' : 'product'),
-      name: String(item.name || '').trim(),
-      sku: item.sku ? String(item.sku).trim() : '',
-
-      // preferred fields
-      salePrice,
-      providerCost,
-
-      // legacy mirror fields
-      unitPrice: salePrice,
-      unitCost: providerCost,
-
-      photoDataUrl: (item as any).photoDataUrl ? String((item as any).photoDataUrl) : '',
-      isTemplate: Boolean((item as any).isTemplate),
-
-      active: item.active !== false,
-      updatedAt: nowIso()
-    };
-
-    if (item.id) {
-      await setDoc(doc(db, 'catalogItems', item.id), payload, { merge: true });
-      return item.id;
-    }
-
-    payload.createdAt = nowIso();
-    const ref = await addDoc(collection(db, 'catalogItems'), payload);
-    return ref.id;
-  },
-
-  async deleteCatalogItem(id: string): Promise<void> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-    await deleteDoc(doc(db, 'catalogItems', id));
-  },
-
-  // Provider Shipments (monthly shipment/transport cost)
-  watchProviderShipments(onValue: (items: ProviderShipment[]) => void): () => void {
-    const q = query(collection(db, 'providerShipments'), orderBy('date', 'desc'), limit(2000));
-    const unsub = onSnapshot(q, (snap) => {
-      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as ProviderShipment[];
-      onValue(items);
-    }, () => onValue([]));
-    return () => unsub();
-  },
-
-  async upsertProviderShipment(sh: Partial<ProviderShipment> & { date: string }): Promise<string> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-
-    const payload: any = {
-      date: String(sh.date || '').slice(0, 10),
-      cost: Number(sh.cost ?? 348),
-      notes: sh.notes ? String(sh.notes) : '',
-      updatedAt: nowIso(),
-      createdBy: (user as any).uid || (user as any).id
-    };
-
-    if (sh.id) {
-      await setDoc(doc(db, 'providerShipments', sh.id), payload, { merge: true });
-      return sh.id;
-    }
-
-    payload.createdAt = nowIso();
-    const ref = await addDoc(collection(db, 'providerShipments'), payload);
-    return ref.id;
-  },
-
-  async deleteProviderShipment(id: string): Promise<void> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-    await deleteDoc(doc(db, 'providerShipments', id));
-  },
-
-  // Patients
-  watchPatients(onValue: (items: Patient[]) => void): () => void {
-    const q = query(collection(db, 'patients'), orderBy('name', 'asc'), limit(2000));
-    const unsub = onSnapshot(q, (snap) => {
-      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Patient[];
-      onValue(items);
-    }, () => onValue([]));
-    return () => unsub();
-  },
-
-  async upsertPatient(patient: Partial<Patient> & { name: string }): Promise<string> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-
-    const payload: any = {
-      name: String(patient.name || '').trim(),
-      phone: patient.phone ? String(patient.phone).trim() : '',
-      email: patient.email ? String(patient.email).trim() : '',
-      address: patient.address ? String(patient.address).trim() : '',
-      notes: patient.notes ? String(patient.notes) : '',
-      updatedAt: nowIso()
-    };
-
-    if (patient.id) {
-      await setDoc(doc(db, 'patients', patient.id), payload, { merge: true });
-      return patient.id;
-    }
-
-    payload.createdAt = nowIso();
-    const ref = await addDoc(collection(db, 'patients'), payload);
-    return ref.id;
-  },
-
-  async deletePatient(id: string): Promise<void> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-    await deleteDoc(doc(db, 'patients', id));
-  },
-
-  // Sales (with annual folio counter)
-  watchSalesByPatient(patientId: string, onValue: (items: Sale[]) => void): () => void {
-    const pid = String(patientId || '').trim();
-    if (!pid) {
-      onValue([]);
-      return () => {};
-    }
-    const q = query(
-      collection(db, 'sales'),
-      where('patientId', '==', pid),
-      orderBy('createdAt', 'desc'),
-      limit(200)
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Sale[];
-      onValue(items);
-    }, () => onValue([]));
-    return () => unsub();
-  },
-
-  async watchSales(year: number, onValue: (items: Sale[]) => void): Promise<() => void> {
-    const q = query(collection(db, 'sales'), where('year', '==', year), orderBy('consecutive', 'desc'), limit(2000));
-    const unsub = onSnapshot(q, (snap) => {
-      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Sale[];
-      onValue(items);
-    }, () => onValue([]));
-    return () => unsub();
-  },
-
-  async createSale(input: {
-    patientId?: string;
-    patientName?: string;
-    patientEmail?: string;
-    patientPhone?: string;
-    invoiceRequired?: boolean;
-    delivered?: boolean;
-    deliveryEstimatedAt?: string;
-    deliveryActualAt?: string;
-    providerPaid?: boolean;
-    providerDue?: number;
-    providerSentAt?: string;
-
-    items: SaleLineItem[];
-    shipping?: number;
-    shippingCost?: number;
-    ivaRate?: number;
-    notes?: string;
-  }): Promise<string> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-
-    const year = new Date().getFullYear();
-    const ivaRate = Number.isFinite(Number(input.ivaRate)) ? Number(input.ivaRate) : 0.16;
-    // Client shipping is no longer tracked.
-    const shipping = 0;
-    const shippingCost = Number((input as any).shippingCost || 0);
-    const items = Array.isArray(input.items) ? input.items : [];
-
-    const cleanItems = items
-      .filter((x) => x && Number(x.qty) > 0)
-      .map((x) => ({
-        catalogItemId: x.catalogItemId ? String(x.catalogItemId) : undefined,
-        name: String(x.name || '').trim(),
-        qty: Number(x.qty || 0),
-        unitPrice: Number(x.unitPrice || 0),
-        unitCost: Number(x.unitCost || 0)
-      }))
-      .filter((x) => x.name && x.qty > 0);
-
-    const itemsSubtotal = cleanItems.reduce((acc, it) => acc + it.qty * it.unitPrice, 0);
-    const itemsCost = cleanItems.reduce((acc, it) => acc + it.qty * it.unitCost, 0);
-    const subtotal = Math.max(0, itemsSubtotal + shipping);
-    const iva = Math.max(0, subtotal * ivaRate);
-    const total = subtotal + iva;
-    const costTotal = itemsCost + Math.max(0, shippingCost);
-    // Profit should not include IVA (tax).
-    const profit = subtotal - costTotal;
-
-    const counterRef = doc(db, 'counters', `sales-${year}`);
-
-    const result = await runTransaction(db, async (tx) => {
-      const counterSnap = await tx.get(counterRef);
-      const current = counterSnap.exists() ? Number((counterSnap.data() as any)?.current || 0) : 0;
-      const next = current + 1;
-      tx.set(counterRef, { current: next, year, updatedAt: nowIso() }, { merge: true });
-
-      const folio = `VTA-${year}-${String(next).padStart(6, '0')}`;
-      const salePayload: any = {
-        folio,
-        year,
-        consecutive: next,
-
-        patientId: input.patientId ? String(input.patientId) : '',
-        patientName: input.patientName ? String(input.patientName) : '',
-        patientEmail: input.patientEmail ? String(input.patientEmail) : '',
-        patientPhone: input.patientPhone ? String(input.patientPhone) : '',
-
-        invoiceRequired: Boolean(input.invoiceRequired),
-        delivered: Boolean(input.delivered),
-        deliveryEstimatedAt: input.deliveryEstimatedAt ? String(input.deliveryEstimatedAt) : '',
-        deliveryActualAt: input.deliveryActualAt ? String(input.deliveryActualAt) : '',
-        providerPaid: Boolean(input.providerPaid),
-        providerDue: Number(input.providerDue || 0),
-        providerSentAt: (input as any).providerSentAt ? String((input as any).providerSentAt) : '',
-
-        items: cleanItems,
-        payments: [],
-        shipping,
-        shippingCost,
-        ivaRate,
-        subtotal,
-        iva,
-        total,
-        costTotal,
-        profit,
-        notes: input.notes ? String(input.notes) : '',
-        createdAt: nowIso(),
-        createdBy: user.uid
-      };
-
-      const saleRef = doc(collection(db, 'sales'));
-      tx.set(saleRef, salePayload);
-      return saleRef.id;
-    });
-
-    return result;
-  },
-
-  async updateSale(id: string, patch: Partial<Sale>): Promise<void> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-    await setDoc(doc(db, 'sales', id), { ...patch, updatedAt: nowIso() } as any, { merge: true });
-  },
-
-  async deleteSale(id: string): Promise<void> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-    await deleteDoc(doc(db, 'sales', id));
-  },
-
-  // Appointments
-  watchAppointments(range: { startIso: string; endIso: string }, onValue: (items: Appointment[]) => void): () => void {
-    const q = query(
-      collection(db, 'appointments'),
-      where('start', '>=', range.startIso),
-      where('start', '<=', range.endIso),
-      orderBy('start', 'asc'),
-      limit(2000)
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Appointment[];
-      onValue(items);
-    }, () => onValue([]));
-    return () => unsub();
-  },
-
-  async upsertAppointment(appt: Partial<Appointment> & { title: string; start: string; end: string }): Promise<string> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-
-    const payload: any = {
-      title: String(appt.title || '').trim(),
-      patientId: appt.patientId ? String(appt.patientId) : '',
-      patientName: appt.patientName ? String(appt.patientName) : '',
-      patientEmail: (appt as any).patientEmail ? String((appt as any).patientEmail) : '',
-      patientPhone: (appt as any).patientPhone ? String((appt as any).patientPhone) : '',
-      start: String(appt.start),
-      end: String(appt.end),
-      status: appt.status || 'scheduled',
-      notes: appt.notes ? String(appt.notes) : '',
-      calendarEventId: (appt as any).calendarEventId ? String((appt as any).calendarEventId) : '',
-      updatedAt: nowIso()
-    };
-
-    if (appt.id) {
-      await setDoc(doc(db, 'appointments', appt.id), payload, { merge: true });
-      return appt.id;
-    }
-
-    payload.createdAt = nowIso();
-    const ref = await addDoc(collection(db, 'appointments'), payload);
-    return ref.id;
-  },
-
-  async updateAppointment(id: string, patch: Partial<Appointment>): Promise<void> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-    await setDoc(doc(db, 'appointments', id), { ...patch, updatedAt: nowIso() } as any, { merge: true });
-  },
-
-  async deleteAppointment(id: string): Promise<void> {
-    const user = await ensureSession();
-    if (!user) throw new AuthError('INVALID_SESSION', 'Sesion invalida.');
-    await deleteDoc(doc(db, 'appointments', id));
-  }
 };
